@@ -4,20 +4,11 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                  ║
-║     🤖 REFi BOT - ULTIMATE EDITION v8.0.0                                        ║
+║     🤖 REFi BOT - ULTIMATE EDITION v8.1.0                                        ║
 ║     Telegram Referral & Earn Bot with Bottom Navigation                          ║
 ║     Python: 3.14.3 | Platform: Render/Koyeb/Railway                              ║
 ║                                                                                  ║
-║     ✨ All Features Working:                                                      ║
-║     • Channel verification with floating buttons                                 ║
-║     • Bottom navigation menu after verification                                  ║
-║     • Referral system with unique codes                                          ║
-║     • Balance with USD conversion (1M REFi = $2)                                 ║
-║     • Wallet setup and management                                                ║
-║     • Withdrawal system with validation                                          ║
-║     • Complete admin panel with statistics                                       ║
-║     • Health check server for Render                                             ║
-║     • Gunicorn WSGI compatibility                                                ║
+║     ✨ All Features Working + Fixed Port Conflict                                 ║
 ║                                                                                  ║
 ╚══════════════════════════════════════════════════════════════════════════════════╝
 """
@@ -102,19 +93,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ==================== HEALTH CHECK SERVER ====================
+# ==================== HEALTH CHECK FUNCTION (NOW INTEGRATED) ====================
 
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    """🏥 Health check server for Render"""
+def health_check_response():
+    """🏥 Generate health check HTML response"""
+    stats = db.get_stats() if 'db' in globals() else {}
     
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html; charset=utf-8')
-        self.end_headers()
-        
-        stats = db.get_stats() if 'db' in globals() else {}
-        
-        html = f"""<!DOCTYPE html>
+    return f"""<!DOCTYPE html>
 <html>
 <head>
     <title>🤖 REFi Bot Status</title>
@@ -190,23 +175,6 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     </div>
 </body>
 </html>"""
-        
-        self.wfile.write(html.encode('utf-8'))
-    
-    def log_message(self, format, *args):
-        return
-
-# Start health server in background thread
-def run_health_server():
-    try:
-        server = HTTPServer(('0.0.0.0', Config.HEALTH_CHECK_PORT), HealthCheckHandler)
-        logger.info(f"🏥 Health check server running on port {Config.HEALTH_CHECK_PORT}")
-        server.serve_forever()
-    except Exception as e:
-        logger.error(f"❌ Health server error: {e}")
-
-threading.Thread(target=run_health_server, daemon=True).start()
-logger.info("🏥 Health check server started")
 
 # ==================== REQUEST SESSION ====================
 
@@ -1240,44 +1208,27 @@ class Handlers:
 # ==================== WSGI APPLICATION FOR GUNICORN ====================
 
 def application(environ, start_response):
-    """WSGI application for Gunicorn compatibility"""
+    """WSGI application for Gunicorn - handles both health checks and bot"""
+    path = environ.get('PATH_INFO', '')
+    
+    # Health check endpoint
+    if path == '/health' or path == '/':
+        status = '200 OK'
+        headers = [('Content-type', 'text/html; charset=utf-8')]
+        start_response(status, headers)
+        return [health_check_response().encode('utf-8')]
+    
+    # Default response
     status = '200 OK'
-    headers = [('Content-type', 'text/html; charset=utf-8')]
+    headers = [('Content-type', 'text/plain; charset=utf-8')]
     start_response(status, headers)
-    
-    stats = db.get_stats()
-    
-    html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>🤖 REFi Bot</title>
-    <meta charset="UTF-8">
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-               background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-               color: white; min-height: 100vh; margin: 0;
-               display: flex; justify-content: center; align-items: center; }}
-        .container {{ text-align: center; background: rgba(255,255,255,0.1);
-                    backdrop-filter: blur(10px); padding: 2rem; border-radius: 20px; }}
-        .status {{ display: inline-block; padding: 0.5rem 1rem;
-                  background: rgba(0,255,0,0.2); border-radius: 50px; margin: 1rem 0; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🤖 REFi Bot</h1>
-        <div class="status">🟢 RUNNING</div>
-        <p>@{Config.BOT_USERNAME}</p>
-        <p>Users: {stats.get('total_users', 0)} | Verified: {stats.get('verified', 0)}</p>
-        <p><small>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small></p>
-    </div>
-</body>
-</html>"""
-    
-    return [html.encode('utf-8')]
+    return [b'REFi Bot is running']
 
 # This is what Gunicorn looks for
 app = application
+
+# No separate health server thread needed anymore
+logger.info(f"🏥 Health check integrated with Gunicorn on port {Config.HEALTH_CHECK_PORT}")
 
 # ==================== MAIN POLLING LOOP ====================
 
@@ -1285,11 +1236,11 @@ user_states = {}
 offset = 0
 
 def main():
-    """🚀 Main polling loop"""
+    """🚀 Main polling loop - runs in background thread under Gunicorn"""
     global offset
     
     print("\n" + "="*70)
-    print("🤖 REFi BOT - ULTIMATE EDITION v8.0.0")
+    print("🤖 REFi BOT - ULTIMATE EDITION v8.1.0")
     print("="*70)
     print(f"📱 Bot: @{Config.BOT_USERNAME}")
     print(f"👤 Admins: {Config.ADMIN_IDS}")
@@ -1416,7 +1367,18 @@ def main():
             logger.error(f"❌ Polling error: {e}")
             time.sleep(5)
 
-# ==================== ENTRY POINT ====================
+# ==================== START BOT IN BACKGROUND THREAD ====================
+
+def start_bot():
+    """Start the bot in a background thread"""
+    bot_thread = threading.Thread(target=main, daemon=True)
+    bot_thread.start()
+    logger.info("🤖 Bot polling thread started")
+
+# Start bot when running under Gunicorn
+start_bot()
+
+# ==================== ENTRY POINT (for local testing) ====================
 
 if __name__ == "__main__":
     try:
