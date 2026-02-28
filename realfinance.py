@@ -4,11 +4,11 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                  ║
-║     🤖 REFi BOT - FINAL WORKING VERSION v9.0.0                                   ║
+║     🤖 REFi BOT - FINAL WORKING VERSION v10.0.0                                  ║
 ║     Telegram Referral & Earn Bot with Bottom Navigation                          ║
 ║     Python: 3.14.3 | Platform: Render Web Service (FREE)                         ║
 ║                                                                                  ║
-║     ✨ All Features Working + Fixed Bot Not Responding                           ║
+║     ✨ All Features Working + Fixed Bot Not Starting                             ║
 ║                                                                                  ║
 ╚══════════════════════════════════════════════════════════════════════════════════╝
 """
@@ -24,7 +24,6 @@ import threading
 from datetime import datetime
 from typing import Dict, Optional, List, Any, Tuple
 from http.server import HTTPServer, BaseHTTPRequestHandler
-import signal
 
 # ==================== REQUESTS SETUP ====================
 try:
@@ -1123,7 +1122,52 @@ class Handlers:
             except:
                 pass
 
-# ==================== MAIN POLLING LOOP ====================
+# ==================== WEB SERVER FOR RENDER ====================
+
+class HealthHandler(BaseHTTPRequestHandler):
+    """Health check handler"""
+    
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html; charset=utf-8')
+        self.end_headers()
+        
+        stats = db.get_stats()
+        
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>🤖 REFi Bot</title>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: sans-serif; text-align: center; padding: 50px; 
+               background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+               color: white; }}
+        .status {{ display: inline-block; padding: 10px 20px; 
+                  background: rgba(0,255,0,0.2); border-radius: 50px; }}
+    </style>
+</head>
+<body>
+    <h1>🤖 REFi Bot</h1>
+    <div class="status">🟢 RUNNING</div>
+    <p>@{Config.BOT_USERNAME}</p>
+    <p>Users: {stats.get('total_users', 0)} | Verified: {stats.get('verified', 0)}</p>
+    <p><small>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small></p>
+</body>
+</html>"""
+        
+        self.wfile.write(html.encode('utf-8'))
+    
+    def log_message(self, format, *args):
+        return
+
+def run_web_server():
+    """Run web server for health checks"""
+    server = HTTPServer(('0.0.0.0', Config.PORT), HealthHandler)
+    logger.info(f"🌐 Web server running on port {Config.PORT}")
+    server.serve_forever()
+
+# ==================== BOT POLLING LOOP ====================
 
 user_states = {}
 offset = 0
@@ -1133,17 +1177,7 @@ def run_bot():
     """🚀 Main polling loop - runs forever"""
     global offset, bot_running
     
-    print("\n" + "="*70)
-    print("🤖 REFi BOT - ULTIMATE EDITION v9.0.0")
-    print("="*70)
-    print(f"📱 Bot: @{Config.BOT_USERNAME}")
-    print(f"👤 Admins: {Config.ADMIN_IDS}")
-    print(f"💰 Welcome: {Utils.format_refi(Config.WELCOME_BONUS)}")
-    print(f"👥 Referral: {Utils.format_refi(Config.REFERRAL_BONUS)}")
-    print(f"💸 Min Withdraw: {Utils.format_refi(Config.MIN_WITHDRAW)}")
-    print(f"👥 Users in DB: {len(db.data['users'])}")
-    print(f"🏥 Web Service running on port {Config.PORT}")
-    print("="*70 + "\n")
+    logger.info("🤖 Bot polling thread started")
     
     while bot_running:
         try:
@@ -1261,64 +1295,31 @@ def run_bot():
             logger.error(f"❌ Polling error: {e}")
             time.sleep(5)
 
-# ==================== WEB SERVER FOR RENDER ====================
-
-from http.server import HTTPServer, BaseHTTPRequestHandler
-
-class HealthHandler(BaseHTTPRequestHandler):
-    """Health check handler"""
-    
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html; charset=utf-8')
-        self.end_headers()
-        
-        stats = db.get_stats()
-        
-        html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>🤖 REFi Bot</title>
-    <meta charset="UTF-8">
-    <style>
-        body {{ font-family: sans-serif; text-align: center; padding: 50px; 
-               background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-               color: white; }}
-        .status {{ display: inline-block; padding: 10px 20px; 
-                  background: rgba(0,255,0,0.2); border-radius: 50px; }}
-    </style>
-</head>
-<body>
-    <h1>🤖 REFi Bot</h1>
-    <div class="status">🟢 RUNNING</div>
-    <p>@{Config.BOT_USERNAME}</p>
-    <p>Users: {stats.get('total_users', 0)} | Verified: {stats.get('verified', 0)}</p>
-    <p><small>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small></p>
-</body>
-</html>"""
-        
-        self.wfile.write(html.encode('utf-8'))
-    
-    def log_message(self, format, *args):
-        return
-
-def run_web_server():
-    """Run web server for health checks"""
-    server = HTTPServer(('0.0.0.0', Config.PORT), HealthHandler)
-    logger.info(f"🌐 Web server running on port {Config.PORT}")
-    server.serve_forever()
-
 # ==================== MAIN ====================
 
 if __name__ == "__main__":
     try:
+        print("\n" + "="*70)
+        print("🤖 REFi BOT - FINAL WORKING VERSION v10.0.0")
+        print("="*70)
+        print(f"📱 Bot: @{Config.BOT_USERNAME}")
+        print(f"👤 Admins: {Config.ADMIN_IDS}")
+        print(f"💰 Welcome: {Utils.format_refi(Config.WELCOME_BONUS)}")
+        print(f"👥 Referral: {Utils.format_refi(Config.REFERRAL_BONUS)}")
+        print(f"💸 Min Withdraw: {Utils.format_refi(Config.MIN_WITHDRAW)}")
+        print(f"👥 Users in DB: {len(db.data['users'])}")
+        print(f"🌐 Web server port: {Config.PORT}")
+        print("="*70 + "\n")
+        
         # Start web server in a thread
         web_thread = threading.Thread(target=run_web_server, daemon=True)
         web_thread.start()
         logger.info("🌐 Web server thread started")
         
-        # Run bot in main thread
+        # Run bot in main thread (this is the key change!)
+        # The bot runs in the main thread, web server in background
         run_bot()
+        
     except KeyboardInterrupt:
         print("\n👋 Bot stopped by user")
         bot_running = False
