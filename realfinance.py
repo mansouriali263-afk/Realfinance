@@ -2,1047 +2,829 @@
 # -*- coding: utf-8 -*-
 
 """
-============================================================
-🤖 REFi BOT - WEB SERVICE VERSION (FREE)
-============================================================
-Python version: 3.14.3
-Token: 8720874613:AAF_Qz2ZmwL8M2kk76FpFpdhbTlP0acnbSs
-
-✨ Works on Render FREE Web Service
-✅ Includes health check server
-============================================================
+╔═══════════════════════════════════════════════════════════════╗
+║     🤖 REFi BOT - PROFESSIONAL EDITION v6.0.0                 ║
+║     Telegram Referral & Earn Bot with Bottom Navigation       ║
+║     Python: 3.14.3 | Platform: Render/Koyeb/Railway           ║
+╚═══════════════════════════════════════════════════════════════╝
 """
 
 import os
-import threading
-import requests
+import sys
 import time
 import json
 import logging
 import random
 import string
+import threading
 from datetime import datetime
+from typing import Dict, Optional, List, Any
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# ==================== HEALTH CHECK SERVER ====================
+# ==================== REQUESTS SETUP ====================
+try:
+    import requests
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+except ImportError:
+    os.system("pip install requests==2.31.0")
+    import requests
 
-class HealthHandler(BaseHTTPRequestHandler):
-    """Simple health check server to keep Render happy"""
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        self.wfile.write(b"<html><body><h1>REFi Bot is running!</h1></body></html>")
+# ==================== CONFIGURATION ====================
+
+class Config:
+    """🎯 Professional Configuration Management"""
     
-    def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers()
+    # Bot Core
+    BOT_TOKEN = "8720874613:AAF_Qz2ZmwL8M2kk76FpFpdhbTlP0acnbSs"
+    BOT_USERNAME = "Realfinancepaybot"
+    API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
     
-    def log_message(self, format, *args):
-        # Suppress log messages
-        return
-
-def run_health_server():
-    """Run health check server in background thread"""
-    port = int(os.environ.get('PORT', 10000))
-    server = HTTPServer(('0.0.0.0', port), HealthHandler)
-    print(f"📡 Health check server running on port {port}")
-    server.serve_forever()
-
-# Start health server in background thread
-health_thread = threading.Thread(target=run_health_server, daemon=True)
-health_thread.start()
-
-# ==================== CONFIG ====================
-BOT_TOKEN = "8720874613:AAF_Qz2ZmwL8M2kk76FpFpdhbTlP0acnbSs"
-ADMIN_IDS = [1653918641]
-ADMIN_PASSWORD = "Ali97$"
-API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
-
-COIN_NAME = "REFi"
-WELCOME_BONUS = 1_000_000
-REFERRAL_BONUS = 1_000_000
-MIN_WITHDRAW = 5_000_000
-REFI_PER_MILLION = 2.0  # 1M REFi = $2
-
-REQUIRED_CHANNELS = [
-    {
-        "name": "REFi Distribution",
-        "username": "@Realfinance_REFI",
-        "link": "https://t.me/Realfinance_REFI"
-    },
-    {
-        "name": "Airdrop Master VIP",
-        "username": "@Airdrop_MasterVIP",
-        "link": "https://t.me/Airdrop_MasterVIP"
-    },
-    {
-        "name": "Daily Airdrop",
-        "username": "@Daily_AirdropX",
-        "link": "https://t.me/Daily_AirdropX"
-    }
-]
+    # Admin
+    ADMIN_IDS = [1653918641]
+    ADMIN_PASSWORD = "Ali97$"
+    
+    # Tokenomics
+    COIN_NAME = "REFi"
+    WELCOME_BONUS = 1_000_000
+    REFERRAL_BONUS = 1_000_000
+    MIN_WITHDRAW = 5_000_000
+    REFI_PER_MILLION = 2.0
+    
+    # Channels
+    REQUIRED_CHANNELS = [
+        {"name": "REFi Distribution", "username": "@Realfinance_REFI", 
+         "link": "https://t.me/Realfinance_REFI"},
+        {"name": "Airdrop Master VIP", "username": "@Airdrop_MasterVIP", 
+         "link": "https://t.me/Airdrop_MasterVIP"},
+        {"name": "Daily Airdrop", "username": "@Daily_AirdropX", 
+         "link": "https://t.me/Daily_AirdropX"}
+    ]
+    
+    # Limits
+    MAX_PENDING_WITHDRAWALS = 3
+    SESSION_TIMEOUT = 3600
+    REQUEST_TIMEOUT = 15
+    MAX_RETRIES = 3
+    HEALTH_CHECK_PORT = int(os.environ.get('PORT', 10000))
+    
+    # Database
+    DB_FILE = "bot_data.json"
 
 # ==================== LOGGING ====================
+
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)-8s | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
 
+# ==================== HEALTH CHECK SERVER ====================
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    """🏥 Health check server for Render"""
+    
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html; charset=utf-8')
+        self.end_headers()
+        
+        stats = db.get_stats() if 'db' in globals() else {}
+        
+        html = f"""<!DOCTYPE html>
+<html>
+<head><title>REFi Bot</title>
+<style>
+body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
+       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+       color: white; min-height: 100vh; margin: 0; 
+       display: flex; justify-content: center; align-items: center; }}
+.container {{ text-align: center; background: rgba(255,255,255,0.1); 
+            backdrop-filter: blur(10px); padding: 2rem; border-radius: 20px; }}
+.status {{ display: inline-block; padding: 0.5rem 1rem; 
+           background: rgba(0,255,0,0.2); border-radius: 50px; }}
+</style></head>
+<body>
+<div class="container">
+    <h1>🤖 REFi Bot</h1>
+    <div class="status">🟢 ONLINE</div>
+    <p>@{Config.BOT_USERNAME}</p>
+    <p>Users: {stats.get('total_users', 0)} | Verified: {stats.get('verified', 0)}</p>
+</div>
+</body>
+</html>"""
+        
+        self.wfile.write(html.encode('utf-8'))
+    
+    def log_message(self, format, *args):
+        return
+
+# Start health server
+threading.Thread(target=lambda: HTTPServer(
+    ('0.0.0.0', Config.HEALTH_CHECK_PORT), HealthCheckHandler
+).serve_forever(), daemon=True).start()
+logger.info(f"🏥 Health server on port {Config.HEALTH_CHECK_PORT}")
+
 # ==================== DATABASE ====================
-db = {
-    "users": {},
-    "withdrawals": {},
-    "admin_sessions": {},
-    "stats": {
-        "start_time": time.time()
-    }
-}
 
-# Load existing data
-try:
-    with open("bot_data.json", "r") as f:
-        data = json.load(f)
-        db.update(data)
-        logger.info(f"✅ Loaded {len(db['users'])} users")
-except FileNotFoundError:
-    logger.info("📁 No existing data, starting fresh")
-except Exception as e:
-    logger.error(f"❌ Load error: {e}")
-
-def save_data():
-    """Save database to file"""
-    try:
-        with open("bot_data.json", "w") as f:
-            json.dump(db, f, indent=2)
-    except Exception as e:
-        logger.error(f"❌ Save error: {e}")
-
-def get_user(user_id):
-    """Get or create user"""
-    user_id = str(user_id)
-    if user_id not in db["users"]:
-        db["users"][user_id] = {
-            "id": user_id,
-            "username": "",
-            "first_name": "",
-            "joined_at": time.time(),
-            "last_active": time.time(),
-            "balance": 0,
-            "total_earned": 0,
-            "total_withdrawn": 0,
-            "referral_code": generate_code(user_id),
-            "referred_by": None,
-            "referrals_count": 0,
-            "referrals": {},
-            "referral_clicks": 0,
-            "verified": False,
-            "verified_at": None,
-            "wallet": None,
-            "wallet_set_at": None,
-            "is_admin": int(user_id) in ADMIN_IDS,
-            "is_banned": False
+class Database:
+    """💾 Thread-safe database"""
+    
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.data = {
+            "users": {},
+            "withdrawals": {},
+            "admin_sessions": {},
+            "stats": {"start_time": time.time()}
         }
-        save_data()
-    return db["users"][user_id]
-
-def update_user(user_id, **kwargs):
-    """Update user data"""
-    user_id = str(user_id)
-    if user_id in db["users"]:
-        db["users"][user_id].update(kwargs)
-        db["users"][user_id]["last_active"] = time.time()
-        save_data()
-
-def generate_code(user_id):
-    """Generate unique referral code"""
-    chars = string.ascii_uppercase + string.digits
-    while True:
-        code = ''.join(random.choices(chars, k=8))
-        # Check uniqueness
-        exists = False
-        for u in db["users"].values():
+        self.load()
+    
+    def load(self):
+        try:
+            with open(Config.DB_FILE, 'r') as f:
+                self.data.update(json.load(f))
+            logger.info(f"✅ Loaded {len(self.data['users'])} users")
+        except: pass
+    
+    def save(self):
+        try:
+            with open(Config.DB_FILE, 'w') as f:
+                json.dump(self.data, f, indent=2)
+        except: pass
+    
+    def get_user(self, user_id: int) -> dict:
+        with self.lock:
+            uid = str(user_id)
+            if uid not in self.data["users"]:
+                self.data["users"][uid] = {
+                    "id": uid,
+                    "username": "",
+                    "first_name": "",
+                    "joined_at": time.time(),
+                    "last_active": time.time(),
+                    "balance": 0,
+                    "total_earned": 0,
+                    "total_withdrawn": 0,
+                    "referral_code": self._generate_code(),
+                    "referred_by": None,
+                    "referrals_count": 0,
+                    "referrals": {},
+                    "referral_clicks": 0,
+                    "verified": False,
+                    "wallet": None,
+                    "is_admin": int(uid) in Config.ADMIN_IDS
+                }
+                self.save()
+            return self.data["users"][uid]
+    
+    def update_user(self, user_id: int, **kwargs):
+        with self.lock:
+            uid = str(user_id)
+            if uid in self.data["users"]:
+                self.data["users"][uid].update(kwargs)
+                self.data["users"][uid]["last_active"] = time.time()
+                self.save()
+    
+    def _generate_code(self) -> str:
+        chars = string.ascii_uppercase + string.digits
+        while True:
+            code = ''.join(random.choices(chars, k=8))
+            if not any(u.get("referral_code") == code for u in self.data["users"].values()):
+                return code
+    
+    def get_user_by_code(self, code: str) -> Optional[dict]:
+        for u in self.data["users"].values():
             if u.get("referral_code") == code:
-                exists = True
-                break
-        if not exists:
-            return code
+                return u
+        return None
+    
+    def get_pending_withdrawals(self) -> List[dict]:
+        return [w for w in self.data["withdrawals"].values() if w.get("status") == "pending"]
+    
+    def create_withdrawal(self, user_id: int, amount: int, wallet: str) -> str:
+        rid = f"W{int(time.time())}{user_id}{random.randint(100,999)}"
+        with self.lock:
+            self.data["withdrawals"][rid] = {
+                "id": rid, "user_id": str(user_id), "amount": amount,
+                "wallet": wallet, "status": "pending", "created_at": time.time()
+            }
+            self.save()
+        return rid
+    
+    def process_withdrawal(self, rid: str, admin_id: int, status: str) -> bool:
+        with self.lock:
+            w = self.data["withdrawals"].get(rid)
+            if not w or w["status"] != "pending":
+                return False
+            w["status"] = status
+            w["processed_at"] = time.time()
+            if status == "rejected":
+                user = self.get_user(int(w["user_id"]))
+                user["balance"] += w["amount"]
+            self.save()
+        return True
+    
+    def get_stats(self) -> dict:
+        users = self.data["users"].values()
+        return {
+            "total_users": len(users),
+            "verified": sum(1 for u in users if u.get("verified")),
+            "total_balance": sum(u.get("balance", 0) for u in users),
+            "pending_withdrawals": len(self.get_pending_withdrawals()),
+            "uptime": int(time.time() - self.data["stats"].get("start_time", time.time()))
+        }
 
-def get_user_by_code(code):
-    """Find user by referral code"""
-    for u in db["users"].values():
-        if u.get("referral_code") == code:
-            return u
-    return None
+db = Database()
 
-def get_user_by_username(username):
-    """Find user by username"""
-    username = username.lower().lstrip('@')
-    for u in db["users"].values():
-        if u.get("username", "").lower() == username:
-            return u
-    return None
+# ==================== UTILITIES ====================
 
-def refi_to_usd(refi):
-    """Convert REFi to USD"""
-    return (refi / 1_000_000) * REFI_PER_MILLION
+class Utils:
+    @staticmethod
+    def format_refi(refi: int) -> str:
+        usd = (refi / 1_000_000) * Config.REFI_PER_MILLION
+        return f"{refi:,} REFi (~${usd:.2f})"
+    
+    @staticmethod
+    def short_wallet(wallet: str) -> str:
+        return f"{wallet[:6]}...{wallet[-4:]}" if wallet and len(wallet) > 10 else "Not set"
+    
+    @staticmethod
+    def is_valid_wallet(wallet: str) -> bool:
+        return wallet and wallet.startswith('0x') and len(wallet) == 42
 
-def format_refi(refi):
-    """Format REFi with USD value"""
-    return f"{refi:,} {COIN_NAME} (~${refi_to_usd(refi):.2f})"
+# ==================== BOTTOM NAVIGATION ====================
+
+class BottomNavigation:
+    """🎯 Professional Bottom Navigation System"""
+    
+    @staticmethod
+    def main_menu(user: dict) -> dict:
+        """🎯 Main menu with bottom navigation"""
+        return {
+            "inline_keyboard": [
+                # Row 1: Balance & Referral
+                [
+                    {"text": "💰 Balance", "callback_data": "menu_balance"},
+                    {"text": "🔗 Referral", "callback_data": "menu_referral"}
+                ],
+                # Row 2: Withdraw & Stats
+                [
+                    {"text": "💸 Withdraw", "callback_data": "menu_withdraw"},
+                    {"text": "📊 Stats", "callback_data": "menu_stats"}
+                ],
+                # Row 3: Wallet (if not set) or Admin
+                (
+                    [{"text": "👛 Set Wallet", "callback_data": "menu_wallet"}]
+                    if not user.get("wallet")
+                    else [{"text": "👑 Admin", "callback_data": "menu_admin"}] 
+                    if user.get("is_admin")
+                    else []
+                )
+            ]
+        }
+    
+    @staticmethod
+    def channels() -> dict:
+        """📢 Channel verification as floating buttons"""
+        keyboard = []
+        for ch in Config.REQUIRED_CHANNELS:
+            keyboard.append([{"text": f"📢 Join {ch['name']}", "url": ch["link"]}])
+        keyboard.append([{"text": "✅ VERIFY NOW", "callback_data": "verify"}])
+        return {"inline_keyboard": keyboard}
+    
+    @staticmethod
+    def back() -> dict:
+        """🔙 Back button"""
+        return {"inline_keyboard": [[{"text": "🔙 Back to Menu", "callback_data": "menu_back"}]]}
+    
+    @staticmethod
+    def admin() -> dict:
+        """👑 Admin panel"""
+        return {"inline_keyboard": [
+            [{"text": "📊 Statistics", "callback_data": "admin_stats"}],
+            [{"text": "💰 Pending", "callback_data": "admin_pending"}],
+            [{"text": "🔍 Search", "callback_data": "admin_search"}],
+            [{"text": "📢 Broadcast", "callback_data": "admin_broadcast"}],
+            [{"text": "🔒 Logout", "callback_data": "admin_logout"}]
+        ]}
 
 # ==================== TELEGRAM API ====================
 
-def send_message(chat_id, text, reply_markup=None):
-    """Send message via Telegram API"""
-    url = f"{API_URL}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "Markdown"
-    }
-    if reply_markup:
-        payload["reply_markup"] = json.dumps(reply_markup)
-    try:
-        response = requests.post(url, json=payload, timeout=10)
-        return response.json()
-    except Exception as e:
-        logger.error(f"❌ Send error: {e}")
-        return None
-
-def edit_message(chat_id, message_id, text, reply_markup=None):
-    """Edit message"""
-    url = f"{API_URL}/editMessageText"
-    payload = {
-        "chat_id": chat_id,
-        "message_id": message_id,
-        "text": text,
-        "parse_mode": "Markdown"
-    }
-    if reply_markup:
-        payload["reply_markup"] = json.dumps(reply_markup)
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        logger.error(f"❌ Edit error: {e}")
-
-def answer_callback(callback_id):
-    """Answer callback query"""
-    url = f"{API_URL}/answerCallbackQuery"
-    payload = {"callback_query_id": callback_id}
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        logger.error(f"❌ Callback error: {e}")
-
-def get_chat_member(chat_id, user_id):
-    """Check channel membership"""
-    url = f"{API_URL}/getChatMember"
-    params = {"chat_id": chat_id, "user_id": user_id}
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        data = response.json()
-        if data.get("ok"):
-            return data.get("result", {}).get("status")
-    except Exception as e:
-        logger.error(f"❌ ChatMember error: {e}")
-    return None
-
-# ==================== KEYBOARDS ====================
-
-def verify_keyboard():
-    """Single floating verify button"""
-    return {"inline_keyboard": [[
-        {"text": "✅ VERIFY MEMBERSHIP", "callback_data": "verify"}
-    ]]}
-
-def main_keyboard(user):
-    """Bottom navigation bar"""
-    keyboard = [
-        [
-            {"text": "💰 Balance", "callback_data": "balance"},
-            {"text": "🔗 Referral", "callback_data": "referral"}
-        ],
-        [
-            {"text": "💸 Withdraw", "callback_data": "withdraw"},
-            {"text": "📊 Stats", "callback_data": "stats"}
-        ]
-    ]
-    # Add wallet button if not set
-    if not user.get("wallet"):
-        keyboard.append([{"text": "👛 Set Wallet", "callback_data": "set_wallet"}])
-    # Add admin button if admin
-    if user.get("is_admin"):
-        keyboard.append([{"text": "👑 Admin Panel", "callback_data": "admin_panel"}])
-    return {"inline_keyboard": keyboard}
-
-def back_keyboard():
-    """Back button only"""
-    return {"inline_keyboard": [[{"text": "🔙 Back", "callback_data": "back"}]]}
-
-def wallet_keyboard():
-    """Wallet options"""
-    return {"inline_keyboard": [
-        [{"text": "🔙 Back to Menu", "callback_data": "back"}]
-    ]}
+class Telegram:
+    """📱 Telegram API Wrapper"""
+    
+    session = requests.Session()
+    retries = Retry(total=3, backoff_factor=1)
+    session.mount('https://', HTTPAdapter(max_retries=retries))
+    
+    @classmethod
+    def _request(cls, method: str, json: dict = None) -> Optional[dict]:
+        try:
+            r = cls.session.post(f"{Config.API_URL}/{method}", json=json, timeout=15)
+            return r.json().get("result") if r.json().get("ok") else None
+        except: return None
+    
+    @classmethod
+    def send_message(cls, chat_id: int, text: str, keyboard: dict = None) -> Optional[dict]:
+        return cls._request("sendMessage", {
+            "chat_id": chat_id, "text": text, "parse_mode": "Markdown",
+            "reply_markup": keyboard
+        })
+    
+    @classmethod
+    def edit_message(cls, chat_id: int, msg_id: int, text: str, keyboard: dict = None) -> Optional[dict]:
+        return cls._request("editMessageText", {
+            "chat_id": chat_id, "message_id": msg_id, "text": text,
+            "parse_mode": "Markdown", "reply_markup": keyboard
+        })
+    
+    @classmethod
+    def answer_callback(cls, callback_id: str) -> Optional[dict]:
+        return cls._request("answerCallbackQuery", {"callback_query_id": callback_id})
+    
+    @classmethod
+    def get_chat_member(cls, chat_id: str, user_id: int) -> Optional[str]:
+        try:
+            r = cls.session.get(f"{Config.API_URL}/getChatMember", 
+                               params={"chat_id": chat_id, "user_id": user_id}, timeout=10)
+            return r.json().get("result", {}).get("status") if r.json().get("ok") else None
+        except: return None
 
 # ==================== HANDLERS ====================
 
-def handle_start(message):
-    """Handle /start command"""
-    chat_id = message["chat"]["id"]
-    user = message["from"]
-    user_id = str(user["id"])
-    text = message.get("text", "")
+class Handlers:
+    """🎯 Professional Handlers"""
     
-    logger.info(f"▶️ Start from {user_id}")
-    
-    # Check for referral
-    args = text.split()
-    if len(args) > 1:
-        ref_code = args[1]
-        referrer = get_user_by_code(ref_code)
-        if referrer and referrer["id"] != user_id:
-            user_data = get_user(user_id)
-            if not user_data.get("referred_by"):
-                update_user(user_id, referred_by=referrer["id"])
-                # Update referrer clicks
-                referrer["referral_clicks"] = referrer.get("referral_clicks", 0) + 1
-                update_user(referrer["id"], referral_clicks=referrer["referral_clicks"])
-                logger.info(f"📋 Referral click: {referrer['id']} -> {user_id}")
-    
-    # Get or create user
-    user_data = get_user(user_id)
-    update_user(user_id,
-               username=user.get("username", ""),
-               first_name=user.get("first_name", ""))
-    
-    # If already verified, show main menu
-    if user_data.get("verified"):
+    @staticmethod
+    def start(message: dict):
+        """🚀 /start command"""
+        chat_id = message["chat"]["id"]
+        user = message["from"]
+        user_id = user["id"]
+        args = message.get("text", "").split()
+        
+        logger.info(f"▶️ Start: {user_id}")
+        
+        # Check referral
+        if len(args) > 1:
+            ref_code = args[1]
+            referrer = db.get_user_by_code(ref_code)
+            if referrer and referrer["id"] != str(user_id):
+                user_data = db.get_user(user_id)
+                if not user_data.get("referred_by"):
+                    db.update_user(user_id, referred_by=referrer["id"])
+                    referrer["referral_clicks"] = referrer.get("referral_clicks", 0) + 1
+                    db.update_user(int(referrer["id"]), referral_clicks=referrer["referral_clicks"])
+        
+        # Get/create user
+        user_data = db.get_user(user_id)
+        db.update_user(user_id, username=user.get("username", ""), first_name=user.get("first_name", ""))
+        
+        # Show main menu if verified
+        if user_data.get("verified"):
+            text = f"🎯 *Main Menu*\n\n💰 Balance: {Utils.format_refi(user_data.get('balance', 0))}"
+            Telegram.send_message(chat_id, text, BottomNavigation.main_menu(user_data))
+            return
+        
+        # Show channel verification
+        channels = "\n".join([f"• {ch['name']}" for ch in Config.REQUIRED_CHANNELS])
         text = (
-            f"🎯 *Main Menu*\n\n"
-            f"💰 Balance: {format_refi(user_data.get('balance', 0))}\n"
-            f"👥 Referrals: {user_data.get('referrals_count', 0)}"
+            f"🎉 *Welcome to REFi Bot!*\n\n"
+            f"💰 Welcome: {Utils.format_refi(Config.WELCOME_BONUS)}\n"
+            f"👥 Referral: {Utils.format_refi(Config.REFERRAL_BONUS)}/friend\n\n"
+            f"📢 Join:\n{channels}\n\n"
+            f"👇 Click VERIFY after joining"
         )
-        send_message(chat_id, text, main_keyboard(user_data))
-        return
+        Telegram.send_message(chat_id, text, BottomNavigation.channels())
     
-    # Show verification screen
-    channels_text = "\n".join([f"• {ch['name']}" for ch in REQUIRED_CHANNELS])
-    welcome_text = (
-        f"🎉 *Welcome to {COIN_NAME} Bot!*\n\n"
-        f"💰 *Welcome Bonus:* {format_refi(WELCOME_BONUS)}\n"
-        f"👥 *Referral Bonus:* {format_refi(REFERRAL_BONUS)} per friend\n\n"
-        f"📢 *To start, you must join these channels:*\n{channels_text}\n\n"
-        f"👇 Click the button below to verify"
-    )
-    send_message(chat_id, welcome_text, verify_keyboard())
-
-def handle_verify(callback, user_id, chat_id, message_id):
-    """Handle verify button"""
-    user_id = str(user_id)
+    @staticmethod
+    def verify(callback: dict, user_id: int, chat_id: int, msg_id: int):
+        """✅ Verify membership"""
+        # Check channels
+        not_joined = []
+        for ch in Config.REQUIRED_CHANNELS:
+            status = Telegram.get_chat_member(ch["username"], user_id)
+            if status not in ["member", "administrator", "creator"]:
+                not_joined.append(ch["name"])
+        
+        if not_joined:
+            text = "❌ *Not joined:*\n" + "\n".join([f"• {ch}" for ch in not_joined])
+            Telegram.edit_message(chat_id, msg_id, text, BottomNavigation.channels())
+            return
+        
+        # Verify user
+        user_data = db.get_user(user_id)
+        
+        if user_data.get("verified"):
+            text = f"✅ Already verified!\n\n{Utils.format_refi(user_data.get('balance', 0))}"
+            Telegram.edit_message(chat_id, msg_id, text, BottomNavigation.main_menu(user_data))
+            return
+        
+        # Add welcome bonus
+        new_balance = user_data.get("balance", 0) + Config.WELCOME_BONUS
+        db.update_user(user_id, verified=True, verified_at=time.time(),
+                      balance=new_balance, total_earned=user_data.get("total_earned", 0) + Config.WELCOME_BONUS)
+        
+        # Process referral
+        if user_data.get("referred_by"):
+            referrer = db.get_user(int(user_data["referred_by"]))
+            if referrer:
+                referrer["balance"] += Config.REFERRAL_BONUS
+                referrer["total_earned"] += Config.REFERRAL_BONUS
+                referrer["referrals_count"] += 1
+                referrer["referrals"][str(user_id)] = time.time()
+                db.update_user(int(user_data["referred_by"]), 
+                              balance=referrer["balance"],
+                              total_earned=referrer["total_earned"],
+                              referrals_count=referrer["referrals_count"],
+                              referrals=referrer["referrals"])
+                
+                Telegram.send_message(int(user_data["referred_by"]),
+                    f"🎉 *Friend Joined!*\n\nYou earned {Utils.format_refi(Config.REFERRAL_BONUS)}")
+        
+        text = (f"✅ *Verified!*\n\n✨ Added {Utils.format_refi(Config.WELCOME_BONUS)}\n"
+                f"💰 Balance: {Utils.format_refi(new_balance)}")
+        Telegram.edit_message(chat_id, msg_id, text, BottomNavigation.main_menu(user_data))
     
-    # Check channel membership
-    not_joined = []
-    for ch in REQUIRED_CHANNELS:
-        status = get_chat_member(ch["username"], int(user_id))
-        if status not in ["member", "administrator", "creator"]:
-            not_joined.append(ch["name"])
+    @staticmethod
+    def menu_balance(callback: dict, user_id: int, chat_id: int, msg_id: int):
+        """💰 Balance"""
+        user_data = db.get_user(user_id)
+        text = (f"💰 *Your Balance*\n\n"
+                f"• {Utils.format_refi(user_data.get('balance', 0))}\n"
+                f"• Total earned: {Utils.format_refi(user_data.get('total_earned', 0))}\n"
+                f"• Referrals: {user_data.get('referrals_count', 0)}")
+        Telegram.edit_message(chat_id, msg_id, text, BottomNavigation.back())
     
-    if not_joined:
-        text = "❌ *Not joined:*\n" + "\n".join([f"• {ch}" for ch in not_joined])
-        edit_message(chat_id, message_id, text, verify_keyboard())
-        return
+    @staticmethod
+    def menu_referral(callback: dict, user_id: int, chat_id: int, msg_id: int):
+        """🔗 Referral"""
+        user_data = db.get_user(user_id)
+        link = f"https://t.me/{Config.BOT_USERNAME}?start={user_data.get('referral_code', '')}"
+        earned = user_data.get('referrals_count', 0) * Config.REFERRAL_BONUS
+        
+        text = (f"🔗 *Your Link*\n\n`{link}`\n\n"
+                f"• You earn: {Utils.format_refi(Config.REFERRAL_BONUS)}/friend\n"
+                f"• Friend gets: {Utils.format_refi(Config.WELCOME_BONUS)}\n"
+                f"• Clicks: {user_data.get('referral_clicks', 0)}\n"
+                f"• Earned: {Utils.format_refi(earned)}")
+        Telegram.edit_message(chat_id, msg_id, text, BottomNavigation.back())
     
-    # Verify user
-    user_data = get_user(user_id)
+    @staticmethod
+    def menu_stats(callback: dict, user_id: int, chat_id: int, msg_id: int):
+        """📊 Stats"""
+        user_data = db.get_user(user_id)
+        joined = datetime.fromtimestamp(user_data.get("joined_at", 0)).strftime("%Y-%m-%d")
+        
+        text = (f"📊 *Your Stats*\n\n"
+                f"• Joined: {joined}\n"
+                f"• Balance: {Utils.format_refi(user_data.get('balance', 0))}\n"
+                f"• Total earned: {Utils.format_refi(user_data.get('total_earned', 0))}\n"
+                f"• Referrals: {user_data.get('referrals_count', 0)}\n"
+                f"• Clicks: {user_data.get('referral_clicks', 0)}\n"
+                f"• Verified: {'✅' if user_data.get('verified') else '❌'}\n"
+                f"• Wallet: {Utils.short_wallet(user_data.get('wallet', ''))}")
+        Telegram.edit_message(chat_id, msg_id, text, BottomNavigation.back())
     
-    if user_data.get("verified"):
-        text = f"✅ *Already verified!*\n\n{format_refi(user_data.get('balance', 0))}"
-        edit_message(chat_id, message_id, text, main_keyboard(user_data))
-        return
+    @staticmethod
+    def menu_withdraw(callback: dict, user_id: int, chat_id: int, msg_id: int):
+        """💸 Withdraw"""
+        user_data = db.get_user(user_id)
+        
+        if not user_data.get("verified"):
+            Telegram.edit_message(chat_id, msg_id, "❌ Verify first!", BottomNavigation.back())
+            return
+        
+        if not user_data.get("wallet"):
+            text = "⚠️ *Set wallet first!*\n\nUse 👛 Set Wallet button"
+            Telegram.edit_message(chat_id, msg_id, text, BottomNavigation.main_menu(user_data))
+            return
+        
+        balance = user_data.get("balance", 0)
+        if balance < Config.MIN_WITHDRAW:
+            text = (f"⚠️ *Minimum: {Utils.format_refi(Config.MIN_WITHDRAW)}*\n"
+                    f"Your balance: {Utils.format_refi(balance)}")
+            Telegram.edit_message(chat_id, msg_id, text, BottomNavigation.back())
+            return
+        
+        text = (f"💸 *Withdraw*\n\n"
+                f"Balance: {Utils.format_refi(balance)}\n"
+                f"Min: {Utils.format_refi(Config.MIN_WITHDRAW)}\n"
+                f"Wallet: {Utils.short_wallet(user_data['wallet'])}\n\n"
+                f"Send amount:")
+        Telegram.edit_message(chat_id, msg_id, text)
+        
+        # Store state
+        global user_states
+        user_states[user_id] = {"action": "withdraw_amount"}
     
-    # Add welcome bonus
-    new_balance = user_data.get("balance", 0) + WELCOME_BONUS
-    update_user(user_id,
-               verified=True,
-               verified_at=time.time(),
-               balance=new_balance,
-               total_earned=user_data.get("total_earned", 0) + WELCOME_BONUS)
+    @staticmethod
+    def menu_wallet(callback: dict, user_id: int, chat_id: int, msg_id: int):
+        """👛 Set wallet"""
+        user_data = db.get_user(user_id)
+        text = (f"👛 *Set Wallet*\n\n"
+                f"Current: {user_data.get('wallet', 'Not set')}\n\n"
+                f"Send your Ethereum address (0x...):")
+        Telegram.edit_message(chat_id, msg_id, text)
+        
+        global user_states
+        user_states[user_id] = {"action": "wallet"}
     
-    # Process referral if exists
-    referred_by = user_data.get("referred_by")
-    if referred_by:
-        referrer = get_user(referred_by)
-        if referrer:
-            # Add referral bonus
-            referrer["balance"] = referrer.get("balance", 0) + REFERRAL_BONUS
-            referrer["total_earned"] = referrer.get("total_earned", 0) + REFERRAL_BONUS
-            referrer["referrals_count"] = referrer.get("referrals_count", 0) + 1
-            referrer["referrals"][str(user_id)] = time.time()
-            update_user(referred_by,
-                       balance=referrer["balance"],
-                       total_earned=referrer["total_earned"],
-                       referrals_count=referrer["referrals_count"],
-                       referrals=referrer["referrals"])
+    @staticmethod
+    def menu_back(callback: dict, user_id: int, chat_id: int, msg_id: int):
+        """🔙 Back to main menu"""
+        user_data = db.get_user(user_id)
+        text = f"🎯 *Main Menu*\n\n💰 Balance: {Utils.format_refi(user_data.get('balance', 0))}"
+        Telegram.edit_message(chat_id, msg_id, text, BottomNavigation.main_menu(user_data))
+    
+    @staticmethod
+    def admin_login(message: dict):
+        """👑 Admin login"""
+        chat_id = message["chat"]["id"]
+        user_id = message["from"]["id"]
+        
+        if user_id not in Config.ADMIN_IDS:
+            Telegram.send_message(chat_id, "⛔ Unauthorized")
+            return
+        
+        Telegram.send_message(chat_id, "🔐 *Enter password:*")
+        global user_states
+        user_states[user_id] = {"action": "admin_login"}
+    
+    @staticmethod
+    def handle_admin_login(text: str, user_id: int, chat_id: int):
+        """✅ Admin login verification"""
+        if text == Config.ADMIN_PASSWORD:
+            db.data["admin_sessions"][str(user_id)] = time.time() + Config.SESSION_TIMEOUT
+            db.save()
             
-            # Notify referrer
+            stats = db.get_stats()
+            text = (f"👑 *Admin Panel*\n\n"
+                    f"Users: {stats['total_users']} | Verified: {stats['verified']}\n"
+                    f"Balance: {Utils.format_refi(stats['total_balance'])}\n"
+                    f"Pending: {stats['pending_withdrawals']}")
+            Telegram.send_message(chat_id, text, BottomNavigation.admin())
+        else:
+            Telegram.send_message(chat_id, "❌ Wrong password!")
+    
+    @staticmethod
+    def handle_wallet(text: str, user_id: int, chat_id: int):
+        """✅ Save wallet"""
+        if not Utils.is_valid_wallet(text):
+            Telegram.send_message(chat_id, "❌ *Invalid wallet*\n\nMust be 0x + 40 hex chars")
+            return
+        
+        db.update_user(user_id, wallet=text, wallet_set_at=time.time())
+        user_data = db.get_user(user_id)
+        Telegram.send_message(chat_id, 
+            f"✅ *Wallet saved!*\n\n{Utils.short_wallet(text)}",
+            BottomNavigation.main_menu(user_data))
+    
+    @staticmethod
+    def handle_withdraw_amount(text: str, user_id: int, chat_id: int):
+        """✅ Process withdrawal"""
+        try:
+            amount = int(text.replace(',', ''))
+        except:
+            Telegram.send_message(chat_id, "❌ Invalid amount")
+            return
+        
+        user_data = db.get_user(user_id)
+        
+        if amount < Config.MIN_WITHDRAW:
+            Telegram.send_message(chat_id, f"❌ Min: {Utils.format_refi(Config.MIN_WITHDRAW)}")
+            return
+        
+        if amount > user_data.get("balance", 0):
+            Telegram.send_message(chat_id, f"❌ Balance: {Utils.format_refi(user_data.get('balance', 0))}")
+            return
+        
+        # Create withdrawal
+        rid = db.create_withdrawal(user_id, amount, user_data["wallet"])
+        db.update_user(user_id, balance=user_data["balance"] - amount)
+        
+        Telegram.send_message(chat_id,
+            f"✅ *Withdrawal requested!*\n\nID: `{rid[:8]}...`\nAmount: {Utils.format_refi(amount)}",
+            BottomNavigation.main_menu(user_data))
+        
+        # Notify admins
+        for admin_id in Config.ADMIN_IDS:
+            Telegram.send_message(admin_id,
+                f"💰 *New Withdrawal*\n\nUser: {user_id}\nAmount: {Utils.format_refi(amount)}")
+    
+    @staticmethod
+    def admin_stats(callback: dict, chat_id: int, msg_id: int):
+        """📊 Admin stats"""
+        stats = db.get_stats()
+        h, m = stats['uptime'] // 3600, (stats['uptime'] % 3600) // 60
+        
+        text = (f"📊 *Statistics*\n\n"
+                f"Users: {stats['total_users']} (✅ {stats['verified']})\n"
+                f"Balance: {Utils.format_refi(stats['total_balance'])}\n"
+                f"Pending: {stats['pending_withdrawals']}\n"
+                f"Uptime: {h}h {m}m")
+        Telegram.edit_message(chat_id, msg_id, text, BottomNavigation.admin())
+    
+    @staticmethod
+    def admin_pending(callback: dict, chat_id: int, msg_id: int):
+        """💰 Pending withdrawals"""
+        pending = db.get_pending_withdrawals()
+        
+        if not pending:
+            Telegram.edit_message(chat_id, msg_id, "✅ No pending withdrawals", BottomNavigation.admin())
+            return
+        
+        keyboard = {"inline_keyboard": []}
+        text = "💰 *Pending Withdrawals*\n\n"
+        
+        for w in pending[:5]:
+            text += f"• `{w['id'][:8]}`: {Utils.format_refi(w['amount'])}\n"
+            keyboard["inline_keyboard"].append([
+                {"text": f"Process {w['id'][:8]}", "callback_data": f"process_{w['id']}"}
+            ])
+        
+        keyboard["inline_keyboard"].append([{"text": "🔙 Back", "callback_data": "admin_back"}])
+        Telegram.edit_message(chat_id, msg_id, text, keyboard)
+    
+    @staticmethod
+    def admin_process(callback: dict, chat_id: int, msg_id: int, rid: str):
+        """⚙️ Process withdrawal"""
+        w = db.data["withdrawals"].get(rid)
+        if not w:
+            return
+        
+        text = (f"💰 *Withdrawal*\n\n"
+                f"ID: {rid}\nUser: {w['user_id']}\n"
+                f"Amount: {Utils.format_refi(w['amount'])}\n"
+                f"Wallet: {w['wallet']}")
+        
+        keyboard = {"inline_keyboard": [
+            [{"text": "✅ Approve", "callback_data": f"approve_{rid}"},
+             {"text": "❌ Reject", "callback_data": f"reject_{rid}"}],
+            [{"text": "🔙 Back", "callback_data": "admin_pending"}]
+        ]}
+        Telegram.edit_message(chat_id, msg_id, text, keyboard)
+    
+    @staticmethod
+    def admin_approve(callback: dict, admin_id: int, chat_id: int, msg_id: int, rid: str):
+        """✅ Approve withdrawal"""
+        if db.process_withdrawal(rid, admin_id, "approved"):
+            Telegram.answer_callback(callback["id"], "✅ Approved")
+        Handlers.admin_pending(callback, chat_id, msg_id)
+    
+    @staticmethod
+    def admin_reject(callback: dict, admin_id: int, chat_id: int, msg_id: int, rid: str):
+        """❌ Reject withdrawal"""
+        if db.process_withdrawal(rid, admin_id, "rejected"):
+            Telegram.answer_callback(callback["id"], "❌ Rejected")
+        Handlers.admin_pending(callback, chat_id, msg_id)
+    
+    @staticmethod
+    def admin_search(callback: dict, chat_id: int, msg_id: int):
+        """🔍 Search user"""
+        Telegram.edit_message(chat_id, msg_id, "🔍 *Send User ID or @username:*")
+        global user_states
+                user_states[callback["from"]["id"]] = {"action": "admin_search"}
+    
+    @staticmethod
+    def handle_admin_search(text: str, admin_id: int, chat_id: int):
+        """🔍 Process user search"""
+        found = None
+        if text.isdigit():
+            found = db.get_user(int(text))
+        else:
+            username = text.lstrip('@').lower()
+            for u in db.data["users"].values():
+                if u.get("username", "").lower() == username:
+                    found = u
+                    break
+        
+        if not found:
+            Telegram.send_message(chat_id, f"❌ User not found: {text}")
+            return
+        
+        stats = db.get_stats()
+        text = (f"👤 *User Found*\n\n"
+                f"ID: `{found['id']}`\n"
+                f"Username: @{found.get('username', 'None')}\n"
+                f"Name: {found.get('first_name', 'Unknown')}\n"
+                f"Balance: {Utils.format_refi(found.get('balance', 0))}\n"
+                f"Referrals: {found.get('referrals_count', 0)}\n"
+                f"Verified: {'✅' if found.get('verified') else '❌'}\n"
+                f"Wallet: {Utils.short_wallet(found.get('wallet', ''))}")
+        
+        Telegram.send_message(chat_id, text, BottomNavigation.admin())
+    
+    @staticmethod
+    def admin_broadcast(callback: dict, chat_id: int, msg_id: int):
+        """📢 Broadcast message"""
+        Telegram.edit_message(chat_id, msg_id, 
+            f"📢 *Broadcast*\n\nSend message to {len(db.data['users'])} users:")
+        global user_states
+        user_states[callback["from"]["id"]] = {"action": "admin_broadcast"}
+    
+    @staticmethod
+    def handle_admin_broadcast(text: str, admin_id: int, chat_id: int):
+        """📢 Process broadcast"""
+        status_msg = Telegram.send_message(chat_id, "📢 Broadcasting...")
+        
+        sent = 0
+        failed = 0
+        
+        for uid in db.data["users"].keys():
             try:
-                send_message(
-                    int(referred_by),
-                    f"🎉 *Friend Joined!*\n\n"
-                    f"{user_data.get('first_name', 'Someone')} joined using your link!\n"
-                    f"✨ You earned {format_refi(REFERRAL_BONUS)}"
-                )
-                logger.info(f"✅ Referral bonus added: {referred_by} -> {user_id}")
-            except Exception as e:
-                logger.error(f"❌ Referral notification error: {e}")
+                Telegram.send_message(int(uid), text)
+                sent += 1
+                if sent % 10 == 0:
+                    time.sleep(0.5)
+            except:
+                failed += 1
+        
+        Telegram.send_message(chat_id,
+            f"✅ *Broadcast Complete*\n\nSent: {sent}\nFailed: {failed}",
+            BottomNavigation.admin())
     
-    # Success message
-    text = (
-        f"✅ *Verification Successful!*\n\n"
-        f"✨ Added {format_refi(WELCOME_BONUS)} to your balance\n"
-        f"💰 Current: {format_refi(new_balance)}\n\n"
-        f"👥 Share your link and earn {format_refi(REFERRAL_BONUS)} per friend!\n\n"
-        f"👇 Use the buttons below to navigate"
-    )
-    edit_message(chat_id, message_id, text, main_keyboard(user_data))
-    logger.info(f"✅ User {user_id} verified")
+    @staticmethod
+    def admin_logout(callback: dict, admin_id: int, chat_id: int, msg_id: int):
+        """🔒 Admin logout"""
+        db.data["admin_sessions"].pop(str(admin_id), None)
+        db.save()
+        
+        user_data = db.get_user(admin_id)
+        Telegram.answer_callback(callback["id"], "🔒 Logged out")
+        Telegram.edit_message(chat_id, msg_id, 
+            f"🔒 *Logged out*\n\n💰 Balance: {Utils.format_refi(user_data.get('balance', 0))}",
+            BottomNavigation.main_menu(user_data))
 
-def handle_balance(callback, user_id, chat_id, message_id):
-    """Show balance"""
-    user_data = get_user(user_id)
-    text = (
-        f"💰 *Your Balance*\n\n"
-        f"• REFi: {user_data.get('balance', 0):,}\n"
-        f"• USD: ${refi_to_usd(user_data.get('balance', 0)):.2f}\n\n"
-        f"📊 *Statistics*\n"
-        f"• Total earned: {format_refi(user_data.get('total_earned', 0))}\n"
-        f"• Total withdrawn: {format_refi(user_data.get('total_withdrawn', 0))}\n"
-        f"• Referrals: {user_data.get('referrals_count', 0)}"
-    )
-    edit_message(chat_id, message_id, text, back_keyboard())
+# ==================== MAIN POLLING LOOP ====================
 
-def handle_referral(callback, user_id, chat_id, message_id):
-    """Show referral link"""
-    user_data = get_user(user_id)
-    link = f"https://t.me/Realfinancepaybot?start={user_data.get('referral_code', '')}"
-    earned = user_data.get('referrals_count', 0) * REFERRAL_BONUS
-    
-    text = (
-        f"🔗 *Your Referral Link*\n\n"
-        f"`{link}`\n\n"
-        f"🎁 *Rewards*\n"
-        f"• You earn: {format_refi(REFERRAL_BONUS)} per friend\n"
-        f"• Friend gets: {format_refi(WELCOME_BONUS)}\n\n"
-        f"📊 *Stats*\n"
-        f"• Clicks: {user_data.get('referral_clicks', 0)}\n"
-        f"• Successful: {user_data.get('referrals_count', 0)}\n"
-        f"• Earned: {format_refi(earned)}"
-    )
-    edit_message(chat_id, message_id, text, back_keyboard())
-
-def handle_stats(callback, user_id, chat_id, message_id):
-    """Show statistics"""
-    user_data = get_user(user_id)
-    joined = datetime.fromtimestamp(user_data.get("joined_at", 0)).strftime("%Y-%m-%d %H:%M")
-    
-    text = (
-        f"📊 *Your Statistics*\n\n"
-        f"👤 *User Info*\n"
-        f"• ID: `{user_id}`\n"
-        f"• Joined: {joined}\n\n"
-        f"💰 *Financial*\n"
-        f"• Balance: {format_refi(user_data.get('balance', 0))}\n"
-        f"• Total earned: {format_refi(user_data.get('total_earned', 0))}\n"
-        f"• Withdrawn: {format_refi(user_data.get('total_withdrawn', 0))}\n\n"
-        f"👥 *Referrals*\n"
-        f"• Count: {user_data.get('referrals_count', 0)}\n"
-        f"• Clicks: {user_data.get('referral_clicks', 0)}\n\n"
-        f"✅ *Status*\n"
-        f"• Verified: {'✅' if user_data.get('verified') else '❌'}\n"
-        f"• Wallet: {'✅ Set' if user_data.get('wallet') else '❌ Not set'}"
-    )
-    edit_message(chat_id, message_id, text, back_keyboard())
-
-def handle_set_wallet(callback, user_id, chat_id, message_id):
-    """Start wallet setup"""
-    user_data = get_user(user_id)
-    
-    text = (
-        f"👛 *Set Withdrawal Wallet*\n\n"
-        f"Current wallet: {user_data.get('wallet', 'Not set')}\n\n"
-        f"Please enter your Ethereum wallet address.\n"
-        f"It must start with `0x` and be 42 characters long.\n\n"
-        f"Example: `0x742d35Cc6634C0532925a3b844Bc454e4438f44e`"
-    )
-    edit_message(chat_id, message_id, text, wallet_keyboard())
-    
-    # Set state
-    global user_states
-    user_states[user_id] = {"action": "waiting_wallet"}
-
-def handle_wallet_input(message, user_id, chat_id):
-    """Process wallet address input"""
-    global user_states
-    
-    wallet = message.get("text", "").strip()
-    
-    # Validate wallet
-    if not wallet.startswith("0x") or len(wallet) != 42:
-        send_message(chat_id, 
-                    "❌ *Invalid wallet address*\n\n"
-                    "Must start with 0x and be 42 characters long.\n"
-                    "Please try again or use /start to cancel.")
-        return
-    
-    try:
-        int(wallet[2:], 16)  # Check if hex
-    except ValueError:
-        send_message(chat_id, "❌ Invalid hex characters. Please try again.")
-        return
-    
-    # Save wallet
-    update_user(user_id, wallet=wallet, wallet_set_at=time.time())
-    
-    user_data = get_user(user_id)
-    text = (
-        f"✅ *Wallet saved successfully!*\n\n"
-        f"Wallet: `{wallet[:6]}...{wallet[-4:]}`\n\n"
-        f"You can now withdraw your REFi tokens."
-    )
-    send_message(chat_id, text, main_keyboard(user_data))
-    
-    user_states.pop(user_id, None)
-    logger.info(f"👛 Wallet set for user {user_id}")
-
-def handle_withdraw(callback, user_id, chat_id, message_id):
-    """Start withdrawal process"""
-    user_data = get_user(user_id)
-    
-    if not user_data.get("verified"):
-        text = "❌ *You must verify first!*\n\nSend /start to begin."
-        edit_message(chat_id, message_id, text, back_keyboard())
-        return
-    
-    if not user_data.get("wallet"):
-        text = (
-            "⚠️ *You need to set a wallet first!*\n\n"
-            "Please use the [👛 Set Wallet] button to add your wallet address."
-        )
-        edit_message(chat_id, message_id, text, main_keyboard(user_data))
-        return
-    
-    balance = user_data.get("balance", 0)
-    if balance < MIN_WITHDRAW:
-        text = (
-            f"⚠️ *Minimum withdrawal: {format_refi(MIN_WITHDRAW)}*\n"
-            f"Your balance: {format_refi(balance)}\n\n"
-            f"You need {format_refi(MIN_WITHDRAW - balance)} more to withdraw."
-        )
-        edit_message(chat_id, message_id, text, back_keyboard())
-        return
-    
-    text = (
-        f"💸 *Withdraw*\n\n"
-        f"Balance: {format_refi(balance)}\n"
-        f"Minimum: {format_refi(MIN_WITHDRAW)}\n"
-        f"Wallet: `{user_data['wallet'][:6]}...{user_data['wallet'][-4:]}`\n\n"
-        f"Send the amount you want to withdraw:"
-    )
-    edit_message(chat_id, message_id, text)
-    
-    global user_states
-    user_states[user_id] = {"action": "waiting_withdraw_amount"}
-
-def handle_withdraw_amount(message, user_id, chat_id):
-    """Process withdrawal amount"""
-    global user_states
-    
-    try:
-        amount = int(message.get("text", "").replace(",", "").strip())
-    except ValueError:
-        send_message(chat_id, "❌ Please enter a valid number.")
-        return
-    
-    user_data = get_user(user_id)
-    
-    if amount < MIN_WITHDRAW:
-        send_message(chat_id, f"❌ Minimum amount is {format_refi(MIN_WITHDRAW)}")
-        return
-    
-    if amount > user_data.get("balance", 0):
-        send_message(chat_id, f"❌ Insufficient balance. You have {format_refi(user_data.get('balance', 0))}")
-        return
-    
-    # Create withdrawal request
-    request_id = f"W{int(time.time())}{user_id}{random.randint(100,999)}"
-    withdrawal = {
-        "id": request_id,
-        "user_id": user_id,
-        "amount": amount,
-        "wallet": user_data["wallet"],
-        "status": "pending",
-        "created_at": time.time()
-    }
-    db["withdrawals"][request_id] = withdrawal
-    save_data()
-    
-    # Deduct balance
-    new_balance = user_data.get("balance", 0) - amount
-    update_user(user_id, balance=new_balance)
-    
-    # Confirm to user
-    text = (
-        f"✅ *Withdrawal Request Submitted!*\n\n"
-        f"📝 Request ID: `{request_id[:8]}...`\n"
-        f"💰 Amount: {format_refi(amount)}\n"
-        f"📮 Wallet: `{user_data['wallet'][:6]}...{user_data['wallet'][-4:]}`\n\n"
-        f"⏳ Status: *Pending Review*\n\n"
-        f"You'll be notified when processed."
-    )
-    send_message(chat_id, text, main_keyboard(user_data))
-    
-    # Notify admins
-    for admin_id in ADMIN_IDS:
-        try:
-            send_message(
-                admin_id,
-                f"💰 *New Withdrawal Request*\n\n"
-                f"User: {user_data.get('first_name', 'Unknown')} (@{user_data.get('username', '')})\n"
-                f"ID: `{user_id}`\n"
-                f"Amount: {format_refi(amount)}\n"
-                f"Wallet: `{user_data['wallet']}`\n\n"
-                f"Request ID: `{request_id}`"
-            )
-        except Exception as e:
-            logger.error(f"❌ Admin notification error: {e}")
-    
-    logger.info(f"💰 Withdrawal created: {request_id} for {amount} REFi")
-    user_states.pop(user_id, None)
-
-def handle_back(callback, user_id, chat_id, message_id):
-    """Return to main menu"""
-    user_data = get_user(user_id)
-    text = (
-        f"🎯 *Main Menu*\n\n"
-        f"💰 Balance: {format_refi(user_data.get('balance', 0))}\n"
-        f"👥 Referrals: {user_data.get('referrals_count', 0)}"
-    )
-    edit_message(chat_id, message_id, text, main_keyboard(user_data))
-
-# ==================== ADMIN HANDLERS ====================
-
-def handle_admin_command(message):
-    """Handle /admin command"""
-    chat_id = message["chat"]["id"]
-    user_id = message["from"]["id"]
-    
-    if user_id not in ADMIN_IDS:
-        send_message(chat_id, "⛔ Unauthorized")
-        return
-    
-    if user_id in db["admin_sessions"] and db["admin_sessions"][user_id] > time.time():
-        show_admin_panel(chat_id, user_id)
-        return
-    
-    send_message(chat_id, "🔐 *Admin Login*\n\nPlease enter password:")
-    global user_states
-    user_states[str(user_id)] = {"action": "admin_login"}
-
-def handle_admin_login(message, user_id, chat_id):
-    """Process admin login"""
-    global user_states
-    
-    password = message.get("text", "").strip()
-    
-    if password == ADMIN_PASSWORD:
-        db["admin_sessions"][user_id] = time.time() + 3600
-        save_data()
-        send_message(chat_id, "✅ *Login successful!*")
-        show_admin_panel(chat_id, user_id)
-    else:
-        send_message(chat_id, "❌ *Wrong password!*")
-    
-    user_states.pop(str(user_id), None)
-
-def show_admin_panel(chat_id, user_id):
-    """Display admin panel"""
-    total_users = len(db["users"])
-    verified = sum(1 for u in db["users"].values() if u.get("verified"))
-    total_balance = sum(u.get("balance", 0) for u in db["users"].values())
-    pending = len([w for w in db["withdrawals"].values() if w.get("status") == "pending"])
-    uptime = int(time.time() - db["stats"]["start_time"])
-    hours = uptime // 3600
-    minutes = (uptime % 3600) // 60
-    
-    keyboard = {
-        "inline_keyboard": [
-            [{"text": "📊 Statistics", "callback_data": "admin_stats"}],
-            [{"text": "💰 Pending Withdrawals", "callback_data": "admin_withdrawals"}],
-            [{"text": "🔍 Search User", "callback_data": "admin_search"}],
-            [{"text": "📢 Broadcast", "callback_data": "admin_broadcast"}],
-            [{"text": "👥 Users List", "callback_data": "admin_users"}],
-            [{"text": "🔒 Logout", "callback_data": "admin_logout"}]
-        ]
-    }
-    
-    text = (
-        f"👑 *Admin Panel*\n\n"
-        f"📊 *Statistics*\n"
-        f"• Users: {total_users} (✅ {verified})\n"
-        f"• Balance: {format_refi(total_balance)}\n"
-        f"• Pending withdrawals: {pending}\n"
-        f"• Uptime: {hours}h {minutes}m"
-    )
-    
-    send_message(chat_id, text, keyboard)
-
-def handle_admin_stats(callback, user_id, chat_id, message_id):
-    """Show detailed statistics"""
-    if user_id not in ADMIN_IDS or user_id not in db["admin_sessions"]:
-        return
-    
-    now = time.time()
-    active_today = sum(1 for u in db["users"].values() if u.get("last_active", 0) > now - 86400)
-    active_week = sum(1 for u in db["users"].values() if u.get("last_active", 0) > now - 604800)
-    
-    total_balance = sum(u.get("balance", 0) for u in db["users"].values())
-    total_earned = sum(u.get("total_earned", 0) for u in db["users"].values())
-    total_withdrawn = db["stats"].get("total_withdrawn", 0)
-    
-    text = (
-        f"📊 *Detailed Statistics*\n\n"
-        f"👥 *Users*\n"
-        f"• Total: {len(db['users'])}\n"
-        f"• Verified: {sum(1 for u in db['users'].values() if u.get('verified'))}\n"
-        f"• Active today: {active_today}\n"
-        f"• Active week: {active_week}\n\n"
-        f"💰 *Financial*\n"
-        f"• Total balance: {format_refi(total_balance)}\n"
-        f"• Total earned: {format_refi(total_earned)}\n"
-        f"• Total withdrawn: {format_refi(total_withdrawn)}\n\n"
-        f"📈 *Referrals*\n"
-        f"• Total: {sum(u.get('referrals_count', 0) for u in db['users'].values())}"
-    )
-    edit_message(chat_id, message_id, text)
-
-def handle_admin_withdrawals(callback, user_id, chat_id, message_id):
-    """Show pending withdrawals"""
-    if user_id not in ADMIN_IDS or user_id not in db["admin_sessions"]:
-        return
-    
-    pending = [w for w in db["withdrawals"].values() if w.get("status") == "pending"]
-    
-    if not pending:
-        text = "✅ *No pending withdrawals*"
-        edit_message(chat_id, message_id, text)
-        return
-    
-    text = "💰 *Pending Withdrawals*\n\n"
-    keyboard = []
-    
-    for w in pending[:5]:
-        user = get_user(w["user_id"])
-        name = user.get("first_name", "Unknown")
-        text += (
-            f"🆔 `{w['id'][:8]}...`\n"
-            f"👤 {name}\n"
-            f"💰 {format_refi(w['amount'])}\n\n"
-        )
-        keyboard.append([{"text": f"Process {w['id'][:8]}", "callback_data": f"process_{w['id']}"}])
-    
-    keyboard.append([{"text": "🔙 Back", "callback_data": "admin_back"}])
-    edit_message(chat_id, message_id, text, {"inline_keyboard": keyboard})
-
-def handle_process_withdrawal(callback, user_id, chat_id, message_id, request_id):
-    """Show withdrawal details for processing"""
-    if user_id not in ADMIN_IDS or user_id not in db["admin_sessions"]:
-        return
-    
-    withdrawal = db["withdrawals"].get(request_id)
-    if not withdrawal:
-        answer_callback(callback["id"])
-        return
-    
-    user = get_user(withdrawal["user_id"])
-    
-    text = (
-        f"💰 *Withdrawal Details*\n\n"
-        f"📝 Request: `{request_id}`\n"
-        f"👤 User: {user.get('first_name', 'Unknown')} (@{user.get('username', '')})\n"
-        f"🆔 ID: `{withdrawal['user_id']}`\n"
-        f"💰 Amount: {format_refi(withdrawal['amount'])}\n"
-        f"📮 Wallet: `{withdrawal['wallet']}`\n"
-        f"📅 Created: {datetime.fromtimestamp(withdrawal['created_at']).strftime('%Y-%m-%d %H:%M')}"
-    )
-    
-    keyboard = {
-        "inline_keyboard": [
-            [
-                {"text": "✅ Approve", "callback_data": f"approve_{request_id}"},
-                {"text": "❌ Reject", "callback_data": f"reject_{request_id}"}
-            ],
-            [{"text": "🔙 Back", "callback_data": "admin_withdrawals"}]
-        ]
-    }
-    edit_message(chat_id, message_id, text, keyboard)
-
-def handle_approve_withdrawal(callback, user_id, chat_id, message_id, request_id):
-    """Approve withdrawal"""
-    if user_id not in ADMIN_IDS or user_id not in db["admin_sessions"]:
-        return
-    
-    withdrawal = db["withdrawals"].get(request_id)
-    if not withdrawal or withdrawal["status"] != "pending":
-        answer_callback(callback["id"])
-        return
-    
-    # Update status
-    withdrawal["status"] = "approved"
-    withdrawal["processed_at"] = time.time()
-    withdrawal["processed_by"] = user_id
-    db["stats"]["total_withdrawn"] = db["stats"].get("total_withdrawn", 0) + withdrawal["amount"]
-    save_data()
-    
-    # Notify user
-    try:
-        send_message(
-            int(withdrawal["user_id"]),
-            f"✅ *Withdrawal Approved!*\n\n"
-            f"Request ID: `{request_id[:8]}...`\n"
-            f"Amount: {format_refi(withdrawal['amount'])}\n"
-            f"Your withdrawal has been approved and will be processed shortly."
-        )
-    except Exception as e:
-        logger.error(f"❌ User notification error: {e}")
-    
-    answer_callback(callback["id"], "✅ Approved")
-    handle_admin_withdrawals(callback, user_id, chat_id, message_id)
-
-def handle_reject_withdrawal(callback, user_id, chat_id, message_id, request_id):
-    """Reject withdrawal and return funds"""
-    if user_id not in ADMIN_IDS or user_id not in db["admin_sessions"]:
-        return
-    
-    withdrawal = db["withdrawals"].get(request_id)
-    if not withdrawal or withdrawal["status"] != "pending":
-        answer_callback(callback["id"])
-        return
-    
-    # Return funds to user
-    user = get_user(withdrawal["user_id"])
-    user["balance"] = user.get("balance", 0) + withdrawal["amount"]
-    update_user(withdrawal["user_id"], balance=user["balance"])
-    
-    # Update status
-    withdrawal["status"] = "rejected"
-    withdrawal["processed_at"] = time.time()
-    withdrawal["processed_by"] = user_id
-    save_data()
-    
-    # Notify user
-    try:
-        send_message(
-            int(withdrawal["user_id"]),
-            f"❌ *Withdrawal Rejected*\n\n"
-            f"Request ID: `{request_id[:8]}...`\n"
-            f"Amount: {format_refi(withdrawal['amount'])}\n\n"
-            f"The amount has been returned to your balance."
-        )
-    except Exception as e:
-        logger.error(f"❌ User notification error: {e}")
-    
-    answer_callback(callback["id"], "❌ Rejected")
-    handle_admin_withdrawals(callback, user_id, chat_id, message_id)
-
-def handle_admin_search(callback, user_id, chat_id, message_id):
-    """Initiate user search"""
-    if user_id not in ADMIN_IDS or user_id not in db["admin_sessions"]:
-        return
-    
-    text = "🔍 *Search User*\n\nSend the User ID or @username:"
-    edit_message(chat_id, message_id, text)
-    
-    global user_states
-    user_states[str(user_id)] = {"action": "admin_search"}
-
-def handle_admin_search_input(message, user_id, chat_id):
-    """Process search input"""
-    global user_states
-    
-    query = message.get("text", "").strip()
-    found = None
-    
-    if query.isdigit():
-        found = get_user(query)
-    else:
-        found = get_user_by_username(query)
-    
-    if not found:
-        send_message(chat_id, f"❌ User not found: {query}")
-        user_states.pop(str(user_id), None)
-        return
-    
-    text = (
-        f"👤 *User Found*\n\n"
-        f"ID: `{found['id']}`\n"
-        f"Username: @{found.get('username', 'None')}\n"
-        f"Name: {found.get('first_name', 'Unknown')}\n"
-        f"Balance: {format_refi(found.get('balance', 0))}\n"
-        f"Referrals: {found.get('referrals_count', 0)}\n"
-        f"Verified: {'✅' if found.get('verified') else '❌'}\n"
-        f"Wallet: {'✅' if found.get('wallet') else '❌'}"
-    )
-    send_message(chat_id, text)
-    user_states.pop(str(user_id), None)
-
-def handle_admin_broadcast(callback, user_id, chat_id, message_id):
-    """Initiate broadcast"""
-    if user_id not in ADMIN_IDS or user_id not in db["admin_sessions"]:
-        return
-    
-    text = f"📢 *Broadcast*\n\nSend the message to broadcast to {len(db['users'])} users:"
-    edit_message(chat_id, message_id, text)
-    
-    global user_states
-    user_states[str(user_id)] = {"action": "admin_broadcast"}
-
-def handle_admin_broadcast_input(message, user_id, chat_id):
-    """Process broadcast input"""
-    global user_states
-    
-    msg_text = message.get("text", "")
-    if not msg_text:
-        send_message(chat_id, "❌ Message cannot be empty")
-        return
-    
-    send_message(chat_id, f"📢 Broadcasting to {len(db['users'])} users...")
-    
-    sent = 0
-    failed = 0
-    
-    for uid in db["users"].keys():
-        try:
-            send_message(int(uid), msg_text)
-            sent += 1
-            if sent % 10 == 0:
-                time.sleep(0.5)
-        except Exception as e:
-            failed += 1
-            logger.error(f"❌ Broadcast error to {uid}: {e}")
-    
-    result = f"✅ Broadcast complete: {sent} sent, {failed} failed"
-    send_message(chat_id, result)
-    user_states.pop(str(user_id), None)
-
-def handle_admin_users(callback, user_id, chat_id, message_id):
-    """Show users list"""
-    if user_id not in ADMIN_IDS or user_id not in db["admin_sessions"]:
-        return
-    
-    users_list = sorted(db["users"].values(), key=lambda u: u.get("joined_at", 0), reverse=True)[:10]
-    
-    text = "👥 *Recent Users*\n\n"
-    for u in users_list:
-        name = u.get("first_name", "Unknown")
-        username = f"@{u.get('username', '')}" if u.get('username') else "No username"
-        verified = "✅" if u.get("verified") else "❌"
-        joined = datetime.fromtimestamp(u.get("joined_at", 0)).strftime("%m-%d")
-        text += f"{verified} {name} {username} - {joined}\n"
-    
-    text += f"\n*Total: {len(db['users'])} users*"
-    edit_message(chat_id, message_id, text)
-
-def handle_admin_logout(callback, user_id, chat_id, message_id):
-    """Logout from admin panel"""
-    if user_id in db["admin_sessions"]:
-        del db["admin_sessions"][user_id]
-        save_data()
-    
-    answer_callback(callback["id"], "🔒 Logged out")
-    
-    user_data = get_user(user_id)
-    text = f"🔒 *Logged out*\n\n💰 Balance: {format_refi(user_data.get('balance', 0))}"
-    edit_message(chat_id, message_id, text, main_keyboard(user_data))
-
-def handle_admin_back(callback, user_id, chat_id, message_id):
-    """Back to admin panel"""
-    show_admin_panel(chat_id, user_id)
-
-# ==================== MAIN LOOP ====================
-
-offset = 0
 user_states = {}
+offset = 0
 
 def main():
-    """Main polling loop"""
+    """🚀 Main polling loop"""
     global offset
     
     print("\n" + "="*60)
-    print("🤖 REFi BOT - WEB SERVICE VERSION")
+    print("🤖 REFi BOT - PROFESSIONAL EDITION v6.0.0")
     print("="*60)
-    print(f"📱 Token: {BOT_TOKEN[:15]}...")
-    print(f"👤 Admins: {ADMIN_IDS}")
-    print(f"💰 Welcome: {format_refi(WELCOME_BONUS)}")
-    print(f"👥 Referral: {format_refi(REFERRAL_BONUS)}")
-    print(f"💸 Min withdraw: {format_refi(MIN_WITHDRAW)}")
-    print(f"👥 Users in DB: {len(db['users'])}")
-    print("="*60 + "\n")
-    print("✅ Bot is running! Press Ctrl+C to stop.")
+    print(f"📱 Bot: @{Config.BOT_USERNAME}")
+    print(f"👤 Admins: {Config.ADMIN_IDS}")
+    print(f"💰 Welcome: {Utils.format_refi(Config.WELCOME_BONUS)}")
+    print(f"👥 Users: {len(db.data['users'])}")
     print("="*60 + "\n")
     
     while True:
         try:
-            url = f"{API_URL}/getUpdates"
-            params = {
-                "offset": offset,
-                "timeout": 30,
-                "allowed_updates": ["message", "callback_query"]
-            }
-            
-            response = requests.get(url, params=params, timeout=35)
-            data = response.json()
+            r = requests.post(
+                f"{Config.API_URL}/getUpdates",
+                json={
+                    "offset": offset,
+                    "timeout": 30,
+                    "allowed_updates": ["message", "callback_query"]
+                },
+                timeout=35
+            )
+            data = r.json()
             
             if data.get("ok"):
                 for update in data.get("result", []):
-                    # Process message
+                    # Process messages
                     if "message" in update:
                         msg = update["message"]
                         chat_id = msg["chat"]["id"]
-                        user_id = str(msg["from"]["id"])
+                        user_id = msg["from"]["id"]
                         text = msg.get("text", "")
                         
-                        # Check if user is banned
-                        user_data = get_user(user_id)
-                        if user_data.get("is_banned"):
-                            send_message(chat_id, "⛔ You are banned from using this bot.")
-                            offset = update["update_id"] + 1
-                            continue
-                        
                         # Handle commands
-                        if text.startswith("/start"):
-                            handle_start(msg)
-                        elif text.startswith("/admin"):
-                            handle_admin_command(msg)
+                        if text == "/start":
+                            Handlers.start(msg)
+                        elif text == "/admin":
+                            Handlers.admin_login(msg)
                         elif text.startswith("/"):
-                            send_message(chat_id, "❌ Unknown command. Use /start")
+                            Telegram.send_message(chat_id, "❌ Unknown command")
                         else:
                             # Handle state-based input
                             state = user_states.get(user_id, {}).get("action")
-                            if state == "waiting_wallet":
-                                handle_wallet_input(msg, user_id, chat_id)
-                            elif state == "waiting_withdraw_amount":
-                                handle_withdraw_amount(msg, user_id, chat_id)
+                            if state == "wallet":
+                                Handlers.handle_wallet(text, user_id, chat_id)
+                                user_states.pop(user_id, None)
+                            elif state == "withdraw_amount":
+                                Handlers.handle_withdraw_amount(text, user_id, chat_id)
+                                user_states.pop(user_id, None)
                             elif state == "admin_login":
-                                handle_admin_login(msg, int(user_id), chat_id)
+                                Handlers.handle_admin_login(text, user_id, chat_id)
+                                user_states.pop(user_id, None)
                             elif state == "admin_search":
-                                handle_admin_search_input(msg, int(user_id), chat_id)
+                                Handlers.handle_admin_search(text, user_id, chat_id)
+                                user_states.pop(user_id, None)
                             elif state == "admin_broadcast":
-                                handle_admin_broadcast_input(msg, int(user_id), chat_id)
+                                Handlers.handle_admin_broadcast(text, user_id, chat_id)
+                                user_states.pop(user_id, None)
                     
-                    # Process callback query
+                    # Process callback queries
                     elif "callback_query" in update:
                         cb = update["callback_query"]
                         data = cb.get("data", "")
@@ -1050,50 +832,49 @@ def main():
                         chat_id = cb["message"]["chat"]["id"]
                         msg_id = cb["message"]["message_id"]
                         
-                        answer_callback(cb["id"])
+                        Telegram.answer_callback(cb["id"])
                         
-                        # User callbacks
+                        # Route callbacks
                         if data == "verify":
-                            handle_verify(cb, user_id, chat_id, msg_id)
-                        elif data == "balance":
-                            handle_balance(cb, user_id, chat_id, msg_id)
-                        elif data == "referral":
-                            handle_referral(cb, user_id, chat_id, msg_id)
-                        elif data == "stats":
-                            handle_stats(cb, user_id, chat_id, msg_id)
-                        elif data == "withdraw":
-                            handle_withdraw(cb, user_id, chat_id, msg_id)
-                        elif data == "set_wallet":
-                            handle_set_wallet(cb, user_id, chat_id, msg_id)
-                        elif data == "back":
-                            handle_back(cb, user_id, chat_id, msg_id)
-                        
-                        # Admin callbacks
-                        elif data == "admin_panel":
-                            show_admin_panel(chat_id, user_id)
+                            Handlers.verify(cb, user_id, chat_id, msg_id)
+                        elif data == "menu_back":
+                            Handlers.menu_back(cb, user_id, chat_id, msg_id)
+                        elif data == "menu_balance":
+                            Handlers.menu_balance(cb, user_id, chat_id, msg_id)
+                        elif data == "menu_referral":
+                            Handlers.menu_referral(cb, user_id, chat_id, msg_id)
+                        elif data == "menu_stats":
+                            Handlers.menu_stats(cb, user_id, chat_id, msg_id)
+                        elif data == "menu_withdraw":
+                            Handlers.menu_withdraw(cb, user_id, chat_id, msg_id)
+                        elif data == "menu_wallet":
+                            Handlers.menu_wallet(cb, user_id, chat_id, msg_id)
                         elif data == "admin_stats":
-                            handle_admin_stats(cb, user_id, chat_id, msg_id)
-                        elif data == "admin_withdrawals":
-                            handle_admin_withdrawals(cb, user_id, chat_id, msg_id)
+                            Handlers.admin_stats(cb, chat_id, msg_id)
+                        elif data == "admin_pending":
+                            Handlers.admin_pending(cb, chat_id, msg_id)
                         elif data == "admin_search":
-                            handle_admin_search(cb, user_id, chat_id, msg_id)
+                            Handlers.admin_search(cb, chat_id, msg_id)
                         elif data == "admin_broadcast":
-                            handle_admin_broadcast(cb, user_id, chat_id, msg_id)
-                        elif data == "admin_users":
-                            handle_admin_users(cb, user_id, chat_id, msg_id)
+                            Handlers.admin_broadcast(cb, chat_id, msg_id)
                         elif data == "admin_logout":
-                            handle_admin_logout(cb, user_id, chat_id, msg_id)
+                            Handlers.admin_logout(cb, user_id, chat_id, msg_id)
                         elif data == "admin_back":
-                            handle_admin_back(cb, user_id, chat_id, msg_id)
+                            stats = db.get_stats()
+                            text = (f"👑 *Admin Panel*\n\n"
+                                    f"Users: {stats['total_users']} | Verified: {stats['verified']}\n"
+                                    f"Balance: {Utils.format_refi(stats['total_balance'])}\n"
+                                    f"Pending: {stats['pending_withdrawals']}")
+                            Telegram.edit_message(chat_id, msg_id, text, BottomNavigation.admin())
                         elif data.startswith("process_"):
-                            req_id = data[8:]
-                            handle_process_withdrawal(cb, user_id, chat_id, msg_id, req_id)
+                            rid = data[8:]
+                            Handlers.admin_process(cb, chat_id, msg_id, rid)
                         elif data.startswith("approve_"):
-                            req_id = data[8:]
-                            handle_approve_withdrawal(cb, user_id, chat_id, msg_id, req_id)
+                            rid = data[8:]
+                            Handlers.admin_approve(cb, user_id, chat_id, msg_id, rid)
                         elif data.startswith("reject_"):
-                            req_id = data[7:]
-                            handle_reject_withdrawal(cb, user_id, chat_id, msg_id, req_id)
+                            rid = data[7:]
+                            Handlers.admin_reject(cb, user_id, chat_id, msg_id, rid)
                     
                     offset = update["update_id"] + 1
             
@@ -1103,11 +884,16 @@ def main():
             logger.error(f"❌ Polling error: {e}")
             time.sleep(5)
 
+# ==================== ENTRY POINT ====================
+
+# For Gunicorn (Render/Koyeb compatibility)
+app = None
+
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
         print("\n👋 Bot stopped by user")
     except Exception as e:
-        print(f"\n❌ Fatal error: {e}")
-        logger.exception("Fatal error")
+        logger.exception("❌ Fatal error")
+        print(f"\n❌ Fatal: {e}")
