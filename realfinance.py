@@ -4,9 +4,9 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                  ║
-║     🤖 REFi BOT - ULTIMATE EDITION v8.2.0                                        ║
+║     🤖 REFi BOT - FINAL WORKING VERSION v9.0.0                                   ║
 ║     Telegram Referral & Earn Bot with Bottom Navigation                          ║
-║     Python: 3.14.3 | Platform: Render/Koyeb/Railway                              ║
+║     Python: 3.14.3 | Platform: Render Web Service (FREE)                         ║
 ║                                                                                  ║
 ║     ✨ All Features Working + Fixed Bot Not Responding                           ║
 ║                                                                                  ║
@@ -80,7 +80,7 @@ class Config:
     SESSION_TIMEOUT = 3600  # 1 hour
     REQUEST_TIMEOUT = 15
     MAX_RETRIES = 3
-    HEALTH_CHECK_PORT = int(os.environ.get('PORT', 10000))
+    PORT = int(os.environ.get('PORT', 10000))
     
     # Database
     DB_FILE = "bot_data.json"
@@ -1123,67 +1123,18 @@ class Handlers:
             except:
                 pass
 
-# ==================== WSGI APPLICATION FOR GUNICORN ====================
-
-def application(environ, start_response):
-    """WSGI application for Gunicorn - handles both health checks and bot"""
-    path = environ.get('PATH_INFO', '')
-    
-    # Health check endpoint
-    if path == '/health' or path == '/':
-        status = '200 OK'
-        headers = [('Content-type', 'text/html; charset=utf-8')]
-        start_response(status, headers)
-        
-        stats = db.get_stats()
-        
-        html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>🤖 REFi Bot Status</title>
-    <meta charset="UTF-8">
-    <style>
-        body {{ font-family: sans-serif; text-align: center; padding: 50px; 
-               background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-               color: white; }}
-        .status {{ display: inline-block; padding: 10px 20px; 
-                  background: rgba(0,255,0,0.2); border-radius: 50px; }}
-    </style>
-</head>
-<body>
-    <h1>🤖 REFi Bot</h1>
-    <div class="status">🟢 RUNNING</div>
-    <p>@{Config.BOT_USERNAME}</p>
-    <p>Users: {stats.get('total_users', 0)} | Verified: {stats.get('verified', 0)}</p>
-    <p><small>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small></p>
-</body>
-</html>"""
-        
-        return [html.encode('utf-8')]
-    
-    # Default response
-    status = '200 OK'
-    headers = [('Content-type', 'text/plain; charset=utf-8')]
-    start_response(status, headers)
-    return [b'REFi Bot is running']
-
-# This is what Gunicorn looks for
-app = application
-
-logger.info(f"🏥 Health check integrated with Gunicorn on port {Config.HEALTH_CHECK_PORT}")
-
 # ==================== MAIN POLLING LOOP ====================
 
 user_states = {}
 offset = 0
 bot_running = True
 
-def main():
-    """🚀 Main polling loop - runs in background thread under Gunicorn"""
+def run_bot():
+    """🚀 Main polling loop - runs forever"""
     global offset, bot_running
     
     print("\n" + "="*70)
-    print("🤖 REFi BOT - ULTIMATE EDITION v8.2.0")
+    print("🤖 REFi BOT - ULTIMATE EDITION v9.0.0")
     print("="*70)
     print(f"📱 Bot: @{Config.BOT_USERNAME}")
     print(f"👤 Admins: {Config.ADMIN_IDS}")
@@ -1191,7 +1142,7 @@ def main():
     print(f"👥 Referral: {Utils.format_refi(Config.REFERRAL_BONUS)}")
     print(f"💸 Min Withdraw: {Utils.format_refi(Config.MIN_WITHDRAW)}")
     print(f"👥 Users in DB: {len(db.data['users'])}")
-    print(f"🏥 Health: http://0.0.0.0:{Config.HEALTH_CHECK_PORT}")
+    print(f"🏥 Web Service running on port {Config.PORT}")
     print("="*70 + "\n")
     
     while bot_running:
@@ -1310,36 +1261,64 @@ def main():
             logger.error(f"❌ Polling error: {e}")
             time.sleep(5)
 
-# ==================== START BOT IN BACKGROUND THREAD ====================
+# ==================== WEB SERVER FOR RENDER ====================
 
-def start_bot():
-    """Start the bot in a background thread"""
-    bot_thread = threading.Thread(target=main, daemon=True)
-    bot_thread.start()
-    logger.info("🤖 Bot polling thread started and running")
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# Start bot when running under Gunicorn
-start_bot()
+class HealthHandler(BaseHTTPRequestHandler):
+    """Health check handler"""
+    
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html; charset=utf-8')
+        self.end_headers()
+        
+        stats = db.get_stats()
+        
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>🤖 REFi Bot</title>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: sans-serif; text-align: center; padding: 50px; 
+               background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+               color: white; }}
+        .status {{ display: inline-block; padding: 10px 20px; 
+                  background: rgba(0,255,0,0.2); border-radius: 50px; }}
+    </style>
+</head>
+<body>
+    <h1>🤖 REFi Bot</h1>
+    <div class="status">🟢 RUNNING</div>
+    <p>@{Config.BOT_USERNAME}</p>
+    <p>Users: {stats.get('total_users', 0)} | Verified: {stats.get('verified', 0)}</p>
+    <p><small>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small></p>
+</body>
+</html>"""
+        
+        self.wfile.write(html.encode('utf-8'))
+    
+    def log_message(self, format, *args):
+        return
 
-# Keep the main thread alive
-import signal
-import sys
+def run_web_server():
+    """Run web server for health checks"""
+    server = HTTPServer(('0.0.0.0', Config.PORT), HealthHandler)
+    logger.info(f"🌐 Web server running on port {Config.PORT}")
+    server.serve_forever()
 
-def signal_handler(sig, frame):
-    """Handle shutdown signals"""
-    global bot_running
-    logger.info("🛑 Shutting down bot...")
-    bot_running = False
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
-# ==================== ENTRY POINT (for local testing) ====================
+# ==================== MAIN ====================
 
 if __name__ == "__main__":
     try:
-        main()
+        # Start web server in a thread
+        web_thread = threading.Thread(target=run_web_server, daemon=True)
+        web_thread.start()
+        logger.info("🌐 Web server thread started")
+        
+        # Run bot in main thread
+        run_bot()
     except KeyboardInterrupt:
         print("\n👋 Bot stopped by user")
         bot_running = False
