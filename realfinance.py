@@ -40,7 +40,7 @@ class Config:
     """🎯 Professional Configuration Management"""
     
     # Bot Core
-    BOT_TOKEN = "8720874613:AAF_Qz2ZmwL8M2kk76FpFpdhbTlP0acnbSs"
+    BOT_TOKEN = "8720874613:AAF1tACw5nzGS6qg7NMLD3avIDQxjeA0UMU"
     BOT_USERNAME = "Realfinancepaybot"
     API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
     
