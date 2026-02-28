@@ -4,23 +4,10 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                  ║
-║     🤖 REFi BOT - COMPLETE FINAL VERSION                                         ║
+║     🤖 REFi BOT - COMPLETE FINAL VERSION v16.0                                   ║
 ║     Telegram Referral & Earn Bot with All Features                               ║
 ║                                                                                  ║
-║     ✨ FEATURES:                                                                  ║
-║     • Channel verification (3 channels)                                          ║
-║     • Welcome bonus: 1,000,000 REFi (~$2.00)                                     ║
-║     • Referral bonus: 1,000,000 REFi (~$2.00) per referral                       ║
-║     • Unique referral codes for each user                                        ║
-║     • Balance tracking with USD conversion                                       ║
-║     • Wallet management system                                                   ║
-║     • Withdrawal requests with admin approval                                    ║
-║     • Full admin panel with statistics                                           ║
-║     • User search functionality                                                  ║
-║     • Broadcast messaging to all users                                           ║
-║     • Pending withdrawals management (approve/reject)                            ║
-║     • Bottom navigation menu                                                     ║
-║     • Health check server for Render                                             ║
+║     ✨ FIXED: All functions complete, no cut-off!                                ║
 ║                                                                                  ║
 ╚══════════════════════════════════════════════════════════════════════════════════╝
 """
@@ -37,7 +24,6 @@ from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # ==================== FIX PRINT BUFFERING ====================
-# Ensure all prints appear immediately in logs
 import functools
 print = functools.partial(print, flush=True)
 
@@ -1164,7 +1150,7 @@ def main():
 if __name__ == "__main__":
     try:
         print("\n" + "="*70)
-        print("🤖 REFi BOT - FINAL VERSION v15.0")
+        print("🤖 REFi BOT - FINAL VERSION v16.0")
         print("="*70)
         print(f"📱 Bot: @{BOT_USERNAME}")
         print(f"👤 Admins: {ADMIN_IDS}")
