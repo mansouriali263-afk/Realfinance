@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-🤖 REFi Bot - Diagnostic Version
+🤖 REFi Bot - Diagnostic Version (Fixed Encoding)
 """
 
 import requests
@@ -26,9 +26,10 @@ def log(msg):
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
-        self.send_header('Content-type', 'text/html')
+        self.send_header('Content-type', 'text/html; charset=utf-8')
         self.end_headers()
-        self.wfile.write(b"<h1>🤖 Diagnostic Bot Running</h1>")
+        # FIXED: Use encode() instead of b prefix for Unicode
+        self.wfile.write("<h1>🤖 Diagnostic Bot Running</h1>".encode('utf-8'))
     def log_message(self, *args): pass
 
 def run_web():
@@ -79,4 +80,4 @@ while True:
     except Exception as e:
         log(f"❌ Polling error: {e}")
     
-    time.sleep(5)  # Wait 5 seconds between polls
+    time.sleep(5)
