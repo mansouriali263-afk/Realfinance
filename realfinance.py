@@ -4,18 +4,20 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                  ║
-║     🤖 REFi BOT - PROFESSIONAL EDITION v7.0.0                                    ║
+║     🤖 REFi BOT - ULTIMATE EDITION v8.0.0                                        ║
 ║     Telegram Referral & Earn Bot with Bottom Navigation                          ║
 ║     Python: 3.14.3 | Platform: Render/Koyeb/Railway                              ║
 ║                                                                                  ║
-║     Features:                                                                    ║
+║     ✨ All Features Working:                                                      ║
 ║     • Channel verification with floating buttons                                 ║
 ║     • Bottom navigation menu after verification                                  ║
 ║     • Referral system with unique codes                                          ║
 ║     • Balance with USD conversion (1M REFi = $2)                                 ║
-║     • Withdrawal system with wallet validation                                   ║
+║     • Wallet setup and management                                                ║
+║     • Withdrawal system with validation                                          ║
 ║     • Complete admin panel with statistics                                       ║
 ║     • Health check server for Render                                             ║
+║     • Gunicorn WSGI compatibility                                                ║
 ║                                                                                  ║
 ╚══════════════════════════════════════════════════════════════════════════════════╝
 """
@@ -38,7 +40,6 @@ try:
     from requests.adapters import HTTPAdapter
     from urllib3.util.retry import Retry
 except ImportError:
-    print("📦 Installing requests...")
     os.system("pip install requests==2.31.0")
     import requests
 
@@ -584,9 +585,13 @@ class Telegram:
             else:
                 response = http_session.post(url, json=json, timeout=Config.REQUEST_TIMEOUT)
             data = response.json()
-            return data.get("result") if data.get("ok") else None
+            if data.get("ok"):
+                return data.get("result")
+            else:
+                logger.error(f"❌ Telegram API error: {data.get('description')}")
+                return None
         except Exception as e:
-            logger.error(f"❌ Telegram API error: {e}")
+            logger.error(f"❌ Request error: {e}")
             return None
     
     @classmethod
@@ -655,6 +660,7 @@ class Handlers:
                     db.update_user(user_id, referred_by=referrer["id"])
                     referrer["referral_clicks"] = referrer.get("referral_clicks", 0) + 1
                     db.update_user(int(referrer["id"]), referral_clicks=referrer["referral_clicks"])
+                    logger.info(f"📋 Referral click: {referrer['id']} -> {user_id}")
         
         # Get/create user
         user_data = db.get_user(user_id)
@@ -844,9 +850,13 @@ class Handlers:
     def menu_wallet(callback: dict, user_id: int, chat_id: int, msg_id: int):
         """👛 Set wallet"""
         user_data = db.get_user(user_id)
+        current = user_data.get("wallet", "Not set")
+        if current != "Not set":
+            current = Utils.short_wallet(current)
+        
         text = (
             f"👛 *Set Withdrawal Wallet*\n\n"
-            f"Current wallet: {user_data.get('wallet', 'Not set')}\n\n"
+            f"Current wallet: {current}\n\n"
             f"Please enter your Ethereum wallet address.\n"
             f"It must start with `0x` and be 42 characters long.\n\n"
             f"Example: `0x742d35Cc6634C0532925a3b844Bc454e4438f44e`"
@@ -1086,7 +1096,6 @@ class Handlers:
             Telegram.send_message(chat_id, f"❌ User not found: {text}")
             return
         
-        stats = db.get_stats()
         text = (
             f"👤 *User Found*\n\n"
             f"ID: `{found['id']}`\n"
@@ -1174,6 +1183,7 @@ class Handlers:
             f"✅ *Wallet saved successfully!*\n\n"
             f"Wallet: {Utils.short_wallet(text)}",
             BottomNavigation.main_menu(user_data))
+        logger.info(f"👛 Wallet set for user {user_id}")
     
     @staticmethod
     def handle_withdraw_amount(text: str, user_id: int, chat_id: int):
@@ -1194,6 +1204,14 @@ class Handlers:
             Telegram.send_message(chat_id, f"❌ Insufficient balance. You have {Utils.format_refi(user_data.get('balance', 0))}")
             return
         
+        # Check pending withdrawals
+        pending = db.get_user_withdrawals(user_id, "pending")
+        if len(pending) >= Config.MAX_PENDING_WITHDRAWALS:
+            Telegram.send_message(chat_id, 
+                f"❌ You already have {len(pending)} pending withdrawals.\n"
+                f"Max allowed: {Config.MAX_PENDING_WITHDRAWALS}")
+            return
+        
         # Create withdrawal
         rid = db.create_withdrawal(user_id, amount, user_data["wallet"])
         db.update_user(user_id, balance=user_data["balance"] - amount)
@@ -1204,6 +1222,7 @@ class Handlers:
             f"💰 Amount: {Utils.format_refi(amount)}\n\n"
             f"⏳ Status: *Pending Review*",
             BottomNavigation.main_menu(user_data))
+        logger.info(f"💰 Withdrawal created: {rid} for {amount} REFi")
         
         # Notify admins
         for admin_id in Config.ADMIN_IDS:
@@ -1218,6 +1237,48 @@ class Handlers:
             except:
                 pass
 
+# ==================== WSGI APPLICATION FOR GUNICORN ====================
+
+def application(environ, start_response):
+    """WSGI application for Gunicorn compatibility"""
+    status = '200 OK'
+    headers = [('Content-type', 'text/html; charset=utf-8')]
+    start_response(status, headers)
+    
+    stats = db.get_stats()
+    
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>🤖 REFi Bot</title>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+               background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+               color: white; min-height: 100vh; margin: 0;
+               display: flex; justify-content: center; align-items: center; }}
+        .container {{ text-align: center; background: rgba(255,255,255,0.1);
+                    backdrop-filter: blur(10px); padding: 2rem; border-radius: 20px; }}
+        .status {{ display: inline-block; padding: 0.5rem 1rem;
+                  background: rgba(0,255,0,0.2); border-radius: 50px; margin: 1rem 0; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 REFi Bot</h1>
+        <div class="status">🟢 RUNNING</div>
+        <p>@{Config.BOT_USERNAME}</p>
+        <p>Users: {stats.get('total_users', 0)} | Verified: {stats.get('verified', 0)}</p>
+        <p><small>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small></p>
+    </div>
+</body>
+</html>"""
+    
+    return [html.encode('utf-8')]
+
+# This is what Gunicorn looks for
+app = application
+
 # ==================== MAIN POLLING LOOP ====================
 
 user_states = {}
@@ -1228,7 +1289,7 @@ def main():
     global offset
     
     print("\n" + "="*70)
-    print("🤖 REFi BOT - PROFESSIONAL EDITION v7.0.0")
+    print("🤖 REFi BOT - ULTIMATE EDITION v8.0.0")
     print("="*70)
     print(f"📱 Bot: @{Config.BOT_USERNAME}")
     print(f"👤 Admins: {Config.ADMIN_IDS}")
@@ -1356,9 +1417,6 @@ def main():
             time.sleep(5)
 
 # ==================== ENTRY POINT ====================
-
-# For Gunicorn compatibility
-app = None
 
 if __name__ == "__main__":
     try:
