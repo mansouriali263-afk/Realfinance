@@ -39,7 +39,7 @@ except ImportError:
     from urllib3.util.retry import Retry
 
 # ==================== CONFIG ====================
-BOT_TOKEN = "8720874613:AAFMPJRNrmnte_CzmGxGXFxwbSEi_MsDjt0"
+BOT_TOKEN = "8720874613:AAFy_qzSTZVR_h8U6oUaFUr-pMy1xAKAXxc"
 BOT_USERNAME = "Realfinancepaybot"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 PORT = int(os.environ.get('PORT', 10000))
