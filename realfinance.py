@@ -9,7 +9,7 @@ import threading
 
 print = lambda x: (sys.stdout.write(x + "\n"), sys.stdout.flush())[0]
 
-BOT_TOKEN = "8720874613:AAF1tACw5nzGS6qg7NMLD3avIDQxjeA0UMU"
+BOT_TOKEN = "8720874613:AAFy_qzSTZVR_h8U6oUaFUr-pMy1xAKAXxc"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 PORT = int(os.environ.get('PORT', 10000))
 
