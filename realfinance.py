@@ -4,11 +4,11 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                  ║
-║     🤖 REFi BOT - ULTIMATE EDITION v8.1.0                                        ║
+║     🤖 REFi BOT - ULTIMATE EDITION v8.2.0                                        ║
 ║     Telegram Referral & Earn Bot with Bottom Navigation                          ║
 ║     Python: 3.14.3 | Platform: Render/Koyeb/Railway                              ║
 ║                                                                                  ║
-║     ✨ All Features Working + Fixed Port Conflict                                 ║
+║     ✨ All Features Working + Fixed Bot Not Responding                           ║
 ║                                                                                  ║
 ╚══════════════════════════════════════════════════════════════════════════════════╝
 """
@@ -24,6 +24,7 @@ import threading
 from datetime import datetime
 from typing import Dict, Optional, List, Any, Tuple
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import signal
 
 # ==================== REQUESTS SETUP ====================
 try:
@@ -92,89 +93,6 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
-
-# ==================== HEALTH CHECK FUNCTION (NOW INTEGRATED) ====================
-
-def health_check_response():
-    """🏥 Generate health check HTML response"""
-    stats = db.get_stats() if 'db' in globals() else {}
-    
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>🤖 REFi Bot Status</title>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            min-height: 100vh;
-            margin: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }}
-        .container {{
-            text-align: center;
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            padding: 2rem;
-            border-radius: 20px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-        }}
-        h1 {{ font-size: 2.5rem; margin-bottom: 1rem; }}
-        .status {{
-            display: inline-block;
-            padding: 0.5rem 1rem;
-            border-radius: 50px;
-            background: rgba(0, 255, 0, 0.2);
-            border: 1px solid rgba(0, 255, 0, 0.5);
-            margin: 1rem 0;
-        }}
-        .stats {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 1rem;
-            margin-top: 2rem;
-        }}
-        .stat-card {{
-            background: rgba(255, 255, 255, 0.1);
-            padding: 1rem;
-            border-radius: 10px;
-        }}
-        .stat-value {{ font-size: 1.5rem; font-weight: bold; }}
-        .stat-label {{ font-size: 0.9rem; opacity: 0.8; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🤖 REFi Bot</h1>
-        <div class="status">🟢 ONLINE</div>
-        <p>@{Config.BOT_USERNAME}</p>
-        
-        <div class="stats">
-            <div class="stat-card">
-                <div class="stat-value">{stats.get('total_users', 0)}</div>
-                <div class="stat-label">Users</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">{stats.get('verified', 0)}</div>
-                <div class="stat-label">Verified</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">{stats.get('pending_withdrawals', 0)}</div>
-                <div class="stat-label">Pending</div>
-            </div>
-        </div>
-        
-        <p style="margin-top: 2rem; font-size: 0.8rem; opacity: 0.5;">
-            {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-        </p>
-    </div>
-</body>
-</html>"""
 
 # ==================== REQUEST SESSION ====================
 
@@ -1216,7 +1134,32 @@ def application(environ, start_response):
         status = '200 OK'
         headers = [('Content-type', 'text/html; charset=utf-8')]
         start_response(status, headers)
-        return [health_check_response().encode('utf-8')]
+        
+        stats = db.get_stats()
+        
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>🤖 REFi Bot Status</title>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: sans-serif; text-align: center; padding: 50px; 
+               background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+               color: white; }}
+        .status {{ display: inline-block; padding: 10px 20px; 
+                  background: rgba(0,255,0,0.2); border-radius: 50px; }}
+    </style>
+</head>
+<body>
+    <h1>🤖 REFi Bot</h1>
+    <div class="status">🟢 RUNNING</div>
+    <p>@{Config.BOT_USERNAME}</p>
+    <p>Users: {stats.get('total_users', 0)} | Verified: {stats.get('verified', 0)}</p>
+    <p><small>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small></p>
+</body>
+</html>"""
+        
+        return [html.encode('utf-8')]
     
     # Default response
     status = '200 OK'
@@ -1227,20 +1170,20 @@ def application(environ, start_response):
 # This is what Gunicorn looks for
 app = application
 
-# No separate health server thread needed anymore
 logger.info(f"🏥 Health check integrated with Gunicorn on port {Config.HEALTH_CHECK_PORT}")
 
 # ==================== MAIN POLLING LOOP ====================
 
 user_states = {}
 offset = 0
+bot_running = True
 
 def main():
     """🚀 Main polling loop - runs in background thread under Gunicorn"""
-    global offset
+    global offset, bot_running
     
     print("\n" + "="*70)
-    print("🤖 REFi BOT - ULTIMATE EDITION v8.1.0")
+    print("🤖 REFi BOT - ULTIMATE EDITION v8.2.0")
     print("="*70)
     print(f"📱 Bot: @{Config.BOT_USERNAME}")
     print(f"👤 Admins: {Config.ADMIN_IDS}")
@@ -1251,7 +1194,7 @@ def main():
     print(f"🏥 Health: http://0.0.0.0:{Config.HEALTH_CHECK_PORT}")
     print("="*70 + "\n")
     
-    while True:
+    while bot_running:
         try:
             response = http_session.post(
                 f"{Config.API_URL}/getUpdates",
@@ -1373,10 +1316,24 @@ def start_bot():
     """Start the bot in a background thread"""
     bot_thread = threading.Thread(target=main, daemon=True)
     bot_thread.start()
-    logger.info("🤖 Bot polling thread started")
+    logger.info("🤖 Bot polling thread started and running")
 
 # Start bot when running under Gunicorn
 start_bot()
+
+# Keep the main thread alive
+import signal
+import sys
+
+def signal_handler(sig, frame):
+    """Handle shutdown signals"""
+    global bot_running
+    logger.info("🛑 Shutting down bot...")
+    bot_running = False
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 # ==================== ENTRY POINT (for local testing) ====================
 
@@ -1385,6 +1342,7 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print("\n👋 Bot stopped by user")
+        bot_running = False
     except Exception as e:
         logger.exception("❌ Fatal error")
         print(f"\n❌ Fatal error: {e}")
