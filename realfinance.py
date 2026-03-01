@@ -283,7 +283,7 @@ def handle_start(msg):
                 # Send notification to referrer
                 try:
                     send(referrer_id, 
-                         f"👋 Someone clicked your referral link!\n"
+                         f"👋 *Someone clicked your referral link!*\n\n"
                          f"They haven't verified yet. Once they verify, you'll get {format_refi(REFERRAL_BONUS)}!")
                 except:
                     pass
@@ -297,7 +297,8 @@ def handle_start(msg):
         welcome_back = (
             f"🎯 *Welcome back, {u.get('first_name', 'Friend')}!*\n\n"
             f"💰 Your balance: {format_refi(u.get('balance', 0))}\n"
-            f"👥 Total referrals: {u.get('referrals_count', 0)}"
+            f"👥 Total referrals: {u.get('referrals_count', 0)}\n"
+            f"🔗 Link clicks: {u.get('referral_clicks', 0)}"
         )
         send(chat_id, welcome_back, main_kb(u))
         return
@@ -327,36 +328,66 @@ def handle_verify(cb, user_id, chat_id, msg_id):
         return
     
     u = get_user(user_id)
+    print(f"🔍 Before verification - User: {user_id}")
+    print(f"🔍 Balance: {u.get('balance')}, Verified: {u.get('verified')}")
+    print(f"🔍 Referred by: {u.get('referred_by')}")
     
     if u.get("verified"):
         edit(chat_id, msg_id, f"✅ You're already verified!\n{format_refi(u.get('balance',0))}", main_kb(u))
         return
     
-    # Add welcome bonus
-    new_balance = u.get("balance", 0) + WELCOME_BONUS
+    # ✅ إضافة مكافأة الترحيب
+    old_balance = u.get("balance", 0)
+    new_balance = old_balance + WELCOME_BONUS
+    old_earned = u.get("total_earned", 0)
+    new_earned = old_earned + WELCOME_BONUS
+    
+    print(f"🔍 Adding welcome bonus: {WELCOME_BONUS} to balance")
+    print(f"🔍 Old balance: {old_balance}, New balance: {new_balance}")
+    
     update_user(
         user_id, 
         verified=True, 
         balance=new_balance, 
-        total_earned=u.get("total_earned", 0) + WELCOME_BONUS
+        total_earned=new_earned
     )
     
-    # Process referral
+    # ✅ التحقق من الحفظ
+    updated_u = get_user(user_id)
+    print(f"🔍 After verification - Balance: {updated_u.get('balance')}, Verified: {updated_u.get('verified')}")
+    
+    # ✅ معالجة الإحالة
     referred_by = u.get("referred_by")
     if referred_by:
+        print(f"🔍 Processing referral: User {user_id} was referred by {referred_by}")
         referrer = get_user(int(referred_by))
         if referrer:
-            referrer["balance"] = referrer.get("balance", 0) + REFERRAL_BONUS
-            referrer["total_earned"] = referrer.get("total_earned", 0) + REFERRAL_BONUS
-            referrer["referrals_count"] = referrer.get("referrals_count", 0) + 1
+            # إضافة مكافأة للمُحيل
+            referrer_old_balance = referrer.get("balance", 0)
+            referrer_new_balance = referrer_old_balance + REFERRAL_BONUS
+            referrer_old_earned = referrer.get("total_earned", 0)
+            referrer_new_earned = referrer_old_earned + REFERRAL_BONUS
+            referrer_old_count = referrer.get("referrals_count", 0)
+            referrer_new_count = referrer_old_count + 1
+            
+            print(f"🔍 Adding referral bonus to {referred_by}: {REFERRAL_BONUS}")
+            print(f"🔍 Referrer old balance: {referrer_old_balance}, new balance: {referrer_new_balance}")
+            
             update_user(
                 int(referred_by), 
-                balance=referrer["balance"], 
-                total_earned=referrer["total_earned"], 
-                referrals_count=referrer["referrals_count"]
+                balance=referrer_new_balance, 
+                total_earned=referrer_new_earned, 
+                referrals_count=referrer_new_count
             )
+            
+            # إشعار المُحيل
             send(int(referred_by), 
-                 f"🎉 *Congratulations!*\nYour friend {u.get('first_name', 'Someone')} joined and verified!\n✨ You earned {format_refi(REFERRAL_BONUS)}")
+                 f"🎉 *Congratulations!*\n\n"
+                 f"Your friend {u.get('first_name', 'Someone')} just joined and verified!\n"
+                 f"✨ You earned {format_refi(REFERRAL_BONUS)}!\n\n"
+                 f"💰 Your new balance: {format_refi(referrer_new_balance)}")
+            
+            print(f"✅ Referral bonus added to {referred_by}")
     
     success_msg = (
         f"✅ *Verification Successful!*\n\n"
@@ -388,6 +419,7 @@ def handle_referral(cb, user_id, chat_id, msg_id):
         f"`{link}`\n\n"
         f"• You earn: {format_refi(REFERRAL_BONUS)} per friend\n"
         f"• Link clicks: {u.get('referral_clicks', 0)}\n"
+        f"• Successful referrals: {u.get('referrals_count', 0)}\n"
         f"• Earnings from referrals: {format_refi(earned)}"
     )
     edit(chat_id, msg_id, msg, back_kb())
@@ -404,6 +436,7 @@ def handle_stats(cb, user_id, chat_id, msg_id):
         f"• Total earned: {format_refi(u.get('total_earned', 0))}\n"
         f"• Total withdrawn: {format_refi(u.get('total_withdrawn', 0))}\n"
         f"• Referrals: {u.get('referrals_count', 0)}\n"
+        f"• Link clicks: {u.get('referral_clicks', 0)}\n"
         f"• Verified: {'✅' if u.get('verified') else '❌'}\n"
         f"• Wallet: {short_wallet(u.get('wallet', ''))}"
     )
