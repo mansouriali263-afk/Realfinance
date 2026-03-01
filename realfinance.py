@@ -188,7 +188,11 @@ def answer(cb_id):
 def get_member(chat_id, user_id):
     try:
         r = requests.get(f"{API_URL}/getChatMember", params={"chat_id": chat_id, "user_id": user_id}, timeout=5)
-        return r.json().get("result", {}).get("status")
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("ok"):
+                return data.get("result", {}).get("status")
+        return None
     except Exception as e:
         print(f"Get member error: {e}")
         return None
@@ -281,6 +285,7 @@ def handle_verify(cb, user_id, chat_id, msg_id):
     not_joined = []
     for ch in REQUIRED_CHANNELS:
         status = get_member(ch["username"], user_id)
+        print(f"🔍 Channel {ch['name']} status: {status}")
         if status not in ["member", "administrator", "creator"]:
             not_joined.append(ch["name"])
     
@@ -290,6 +295,7 @@ def handle_verify(cb, user_id, chat_id, msg_id):
         return
     
     u = get_user(user_id)
+    print(f"🔍 Before verification - User data: {u}")
     
     if u.get("verified"):
         edit(chat_id, msg_id, f"✅ You're already verified!\n{format_refi(u.get('balance',0))}", main_kb(u))
@@ -303,6 +309,11 @@ def handle_verify(cb, user_id, chat_id, msg_id):
         balance=new_balance, 
         total_earned=u.get("total_earned", 0) + WELCOME_BONUS
     )
+    
+    # 🔍 تأكد من الحفظ
+    updated_u = get_user(user_id)
+    print(f"🔍 After verification - User data: {updated_u}")
+    print(f"✅ Verified should be True: {updated_u.get('verified')}")
     
     # Process referral
     referred_by = u.get("referred_by")
@@ -375,15 +386,15 @@ def handle_stats(cb, user_id, chat_id, msg_id):
 def handle_withdraw(cb, user_id, chat_id, msg_id):
     u = get_user(user_id)
     
-    if not u.get("verified"):
-        edit(chat_id, msg_id, "❌ *Sorry*, you need to verify first by joining the channels!", back_kb())
-        return
+    print(f"🔍 Withdraw check - Verified status: {u.get('verified')}")
+    print(f"🔍 User balance: {u.get('balance', 0)}")
+    print(f"🔍 User wallet: {u.get('wallet')}")
     
-    # Check if user has wallet
+    # التحقق من وجود محفظة أولاً
     if not u.get("wallet"):
         wallet_msg = (
             f"💸 *Withdrawal Setup*\n\n"
-            f"Before you can withdraw, you need to set up your wallet address.\n\n"
+            f"You need to set up your wallet address first.\n\n"
             f"📝 *Please send your Ethereum wallet address:*\n"
             f"• Must start with `0x`\n"
             f"• Must be 42 characters long\n\n"
@@ -394,21 +405,22 @@ def handle_withdraw(cb, user_id, chat_id, msg_id):
         states[user_id] = "waiting_wallet"
         return
     
-    # Check balance
+    # ✅ التحقق من الرصيد فقط (بدون التحقق من القنوات مرة أخرى)
     balance = u.get("balance", 0)
+    
     if balance < MIN_WITHDRAW:
         needed = MIN_WITHDRAW - balance
         warning_msg = (
-            f"⚠️ *Insufficient Balance for Withdrawal*\n\n"
+            f"⚠️ *Insufficient Balance*\n\n"
             f"Minimum withdrawal: {format_refi(MIN_WITHDRAW)}\n"
-            f"Your current balance: {format_refi(balance)}\n\n"
+            f"Your balance: {format_refi(balance)}\n\n"
             f"You need {format_refi(needed)} more to withdraw.\n\n"
             f"💡 Invite more friends to earn more REFi!"
         )
         edit(chat_id, msg_id, warning_msg, back_kb())
         return
     
-    # Ask for amount
+    # ✅ الرصيد كافي، نطلب المبلغ
     amount_msg = (
         f"💸 *Withdrawal Request*\n\n"
         f"Your balance: {format_refi(balance)}\n"
