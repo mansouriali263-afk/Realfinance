@@ -7,8 +7,11 @@ import sys
 import random
 import string
 import threading
+import hmac
+import hashlib
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import parse_qs
 
 print = lambda x: (sys.stdout.write(x + "\n"), sys.stdout.flush())[0]
 
@@ -17,6 +20,7 @@ BOT_TOKEN = "8720874613:AAFy_qzSTZVR_h8U6oUaFUr-pMy1xAKAXxc"
 BOT_USERNAME = "Realfinancepaybot"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 PORT = int(os.environ.get('PORT', 10000))
+WEBHOOK_URL = os.environ.get('WEBHOOK_URL', f"https://your-service-name.onrender.com/webhook")
 
 ADMIN_IDS = [1653918641]
 ADMIN_PASSWORD = "Ali97$"
@@ -207,16 +211,22 @@ def get_member(chat_id, user_id):
         return r.json().get("result", {}).get("status")
     except: return None
 
-# ==================== WEB SERVER ====================
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-    def log_message(self, *args): pass
+def set_webhook():
+    try:
+        r = requests.post(f"{API_URL}/setWebhook", json={
+            "url": f"{WEBHOOK_URL}/webhook",
+            "allowed_updates": ["message", "callback_query"]
+        }, timeout=10)
+        print(f"Webhook set: {r.json()}")
+        return r.json().get("ok", False)
+    except Exception as e:
+        print(f"Webhook error: {e}")
+        return False
 
-threading.Thread(target=lambda: HTTPServer(('0.0.0.0', PORT), HealthHandler).serve_forever(), daemon=True).start()
-print(f"🌐 Web on {PORT}")
+def delete_webhook():
+    try:
+        requests.post(f"{API_URL}/deleteWebhook", timeout=10)
+    except: pass
 
 # ==================== HANDLERS ====================
 states = {}
@@ -321,7 +331,7 @@ def handle_wd(cb, uid, cid, mid):
             f"⚠️ *Insufficient Balance*\nMin: {format_refi(MIN_WITHDRAW)}\nYour: {format_refi(bal)}",
             back_kb())
         return
-    pending = get_pending_withdrawals()
+    pending = [w for w in db["withdrawals"].values() if w.get("status") == "pending" and w.get("user_id") == str(uid)]
     if len(pending) >= MAX_PENDING_WITHDRAWALS:
         edit(cid, mid, f"⚠️ You have {len(pending)} pending withdrawals", back_kb())
         return
@@ -414,65 +424,110 @@ def handle_withdraw_input(txt, uid, cid):
         update_user(uid, balance=u["balance"] - amt)
         send(cid, f"✅ *Requested!*\nID: {rid[:8]}", main_kb(u))
 
-# ==================== MAIN LOOP ====================
-print("🚀 Starting bot...")
-offset = 0
-
-while True:
-    try:
-        r = requests.post(f"{API_URL}/getUpdates", json={
-            "offset": offset,
-            "timeout": 30,
-            "allowed_updates": ["message", "callback_query"]
-        }, timeout=35)
-        data = r.json()
+# ==================== WEB SERVER ====================
+class BotHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b"Bot is running!")
+        elif self.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ok", "users": len(db["users"])}).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def do_POST(self):
+        if self.path == '/webhook':
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            
+            try:
+                update = json.loads(post_data.decode('utf-8'))
+                self.process_update(update)
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(b'{"ok": true}')
+            except Exception as e:
+                print(f"Error processing update: {e}")
+                self.send_response(500)
+                self.end_headers()
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def process_update(self, update):
+        if "message" in update:
+            msg = update["message"]
+            cid = msg["chat"]["id"]
+            uid = msg["from"]["id"]
+            txt = msg.get("text", "")
+            
+            if txt == "/start":
+                handle_start(msg)
+            elif txt == "/admin":
+                handle_admin_login(msg)
+            else:
+                state = states.get(uid)
+                if state == "wallet":
+                    handle_wallet_input(txt, uid, cid)
+                    states.pop(uid, None)
+                elif state == "wd":
+                    handle_withdraw_input(txt, uid, cid)
+                    states.pop(uid, None)
+                elif state == "admin_login":
+                    handle_admin_login_input(txt, uid, cid)
+                    states.pop(uid, None)
         
-        if data.get("ok"):
-            for upd in data.get("result", []):
-                if "message" in upd:
-                    msg = upd["message"]
-                    cid = msg["chat"]["id"]
-                    uid = msg["from"]["id"]
-                    txt = msg.get("text", "")
-                    
-                    if txt == "/start":
-                        handle_start(msg)
-                    elif txt == "/admin":
-                        handle_admin_login(msg)
-                    else:
-                        state = states.get(uid)
-                        if state == "wallet":
-                            handle_wallet_input(txt, uid, cid)
-                            states.pop(uid, None)
-                        elif state == "wd":
-                            handle_withdraw_input(txt, uid, cid)
-                            states.pop(uid, None)
-                        elif state == "admin_login":
-                            handle_admin_login_input(txt, uid, cid)
-                            states.pop(uid, None)
-                
-                elif "callback_query" in upd:
-                    cb = upd["callback_query"]
-                    d = cb.get("data", "")
-                    uid = cb["from"]["id"]
-                    cid = cb["message"]["chat"]["id"]
-                    mid = cb["message"]["message_id"]
-                    
-                    answer(cb["id"])
-                    
-                    if d == "verify": handle_verify(cb, uid, cid, mid)
-                    elif d == "bal": handle_bal(cb, uid, cid, mid)
-                    elif d == "ref": handle_ref(cb, uid, cid, mid)
-                    elif d == "stats": handle_stats(cb, uid, cid, mid)
-                    elif d == "wd": handle_wd(cb, uid, cid, mid)
-                    elif d == "wallet": handle_wallet(cb, uid, cid, mid)
-                    elif d == "back": handle_back(cb, uid, cid, mid)
-                    elif d == "admin": handle_admin(cb, uid, cid, mid)
-                    elif d == "astats": handle_admin_stats(cb, cid, mid)
-                    elif d == "apending": handle_admin_pending(cb, cid, mid)
-                    elif d.startswith("app_"): handle_approve(cb, uid, cid, mid, d[4:])
-                
-                offset = upd["update_id"] + 1
-    except Exception as e:
-        print(f"❌ {e}")
-        time.sleep(5)
+        elif "callback_query" in update:
+            cb = update["callback_query"]
+            d = cb.get("data", "")
+            uid = cb["from"]["id"]
+            cid = cb["message"]["chat"]["id"]
+            mid = cb["message"]["message_id"]
+            
+            answer(cb["id"])
+            
+            if d == "verify": handle_verify(cb, uid, cid, mid)
+            elif d == "bal": handle_bal(cb, uid, cid, mid)
+            elif d == "ref": handle_ref(cb, uid, cid, mid)
+            elif d == "stats": handle_stats(cb, uid, cid, mid)
+            elif d == "wd": handle_wd(cb, uid, cid, mid)
+            elif d == "wallet": handle_wallet(cb, uid, cid, mid)
+            elif d == "back": handle_back(cb, uid, cid, mid)
+            elif d == "admin": handle_admin(cb, uid, cid, mid)
+            elif d == "astats": handle_admin_stats(cb, cid, mid)
+            elif d == "apending": handle_admin_pending(cb, cid, mid)
+            elif d.startswith("app_"): handle_approve(cb, uid, cid, mid, d[4:])
+    
+    def log_message(self, format, *args):
+        print(f"[{datetime.now()}] {format % args}")
+
+# ==================== MAIN ====================
+if __name__ == "__main__":
+    print("🚀 Starting bot...")
+    
+    # Set webhook on startup
+    delete_webhook()
+    time.sleep(1)
+    if set_webhook():
+        print("✅ Webhook configured successfully")
+    else:
+        print("⚠️ Failed to set webhook, but continuing...")
+    
+    # Start server
+    server = HTTPServer(('0.0.0.0', PORT), BotHandler)
+    print(f"🌐 Server running on port {PORT}")
+    print(f"🔗 Webhook URL: {WEBHOOK_URL}/webhook")
+    
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n🛑 Shutting down...")
+        delete_webhook()
+        server.shutdown()
