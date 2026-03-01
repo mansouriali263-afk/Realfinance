@@ -105,6 +105,18 @@ def get_stats():
         "uptime": int(now - db["stats"].get("start_time", now))
     }
 
+# ==================== KEEP ALIVE SYSTEM ====================
+def keep_alive():
+    """هذا النظام يرسل إشارات مستمرة لمنع النوم"""
+    while True:
+        try:
+            # نرسل طلب لخادمنا كل 5 دقائق
+            requests.get(f"http://localhost:{PORT}", timeout=5)
+            print("💓 Keep alive ping sent")
+        except:
+            pass
+        time.sleep(300)  # 5 دقائق
+
 # ==================== KEYBOARDS ====================
 def channels_kb():
     kb = []
@@ -218,6 +230,10 @@ class HealthHandler(BaseHTTPRequestHandler):
 threading.Thread(target=lambda: HTTPServer(('0.0.0.0', PORT), HealthHandler).serve_forever(), daemon=True).start()
 print(f"🌐 Health check server on port {PORT}")
 
+# بدء نظام keep alive
+threading.Thread(target=keep_alive, daemon=True).start()
+print("💓 Keep alive system started")
+
 # ==================== RESET CONNECTION ====================
 print("🔄 Resetting connection...")
 try:
@@ -289,10 +305,10 @@ def handle_start(msg):
     # Welcome message for new users
     channels_text = "\n".join([f"• {ch['name']}" for ch in REQUIRED_CHANNELS])
     welcome_msg = (
-        f"🎉 *Welcome to Real finance airdrop bot!*\n\n"
+        f"🎉 *Welcome to {BOT_USERNAME}!*\n\n"
         f"💰 Welcome Bonus: {format_refi(WELCOME_BONUS)}\n"
         f"👥 Referral Bonus: {format_refi(REFERRAL_BONUS)} per friend\n\n"
-        f"📢 To start, you must join these channels first:\@Realfinance_REFI\n@Airdrop_MasterVIP\n@Daily_AirdropX\n\n"
+        f"📢 To start, you must join these channels first:\n{channels_text}\n\n"
         f"👇 After joining, click the VERIFY button"
     )
     send(chat_id, welcome_msg, channels_kb())
