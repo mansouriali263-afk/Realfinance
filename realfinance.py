@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+╔══════════════════════════════════════════════════════════════════════════════════╗
+║                                                                                  ║
+║     🤖 REFi BOT - COMPLETE FINAL VERSION v22.0                                   ║
+║     (Working with Local JSON - Firebase Ready)                                   ║
+║                                                                                  ║
+╚══════════════════════════════════════════════════════════════════════════════════╝
+"""
+
 import os
 import sys
 import time
@@ -11,49 +20,21 @@ import threading
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# === PRINT FIX ===
+# ==================== FIX PRINT BUFFERING ====================
 print = lambda x: (sys.stdout.write(x + "\n"), sys.stdout.flush())[0]
 
-# === FIREBASE ===
-import firebase_admin
-from firebase_admin import credentials, db as firebase_db
-
-FIREBASE_CONFIG = {
-    "apiKey": "AIzaSyAo1zUpkMiaB3HmIDQkirqcTxhxIUF0tF0",
-    "authDomain": "realfinance-9af90.firebaseapp.com",
-    "databaseURL": "https://realfinance-9af90-default-rtdb.firebaseio.com/",
-    "projectId": "realfinance-9af90",
-    "storageBucket": "realfinance-9af90.firebasestorage.app",
-    "messagingSenderId": "921539332721",
-    "appId": "1:921539332721:web:24fa696c7b0f035878e9d0"
-}
-
-try:
-    cred = credentials.Certificate("serviceAccountKey.json")
-    firebase_admin.initialize_app(cred, {
-        'databaseURL': FIREBASE_CONFIG['databaseURL']
-    })
-    print("✅ Firebase connected")
-except:
-    firebase_admin.initialize_app(options={
-        'databaseURL': FIREBASE_CONFIG['databaseURL']
-    })
-    print("⚠️ Firebase initialized without auth")
-
-firebase_ref = firebase_db.reference('/')
-
-# === REQUESTS ===
+# ==================== INSTALL REQUESTS IF MISSING ====================
 try:
     import requests
 except ImportError:
-    os.system("pip install requests")
+    os.system("pip install requests==2.31.0")
     import requests
 
-# === CONFIG ===
+# ==================== CONFIGURATION ====================
 BOT_TOKEN = "8720874613:AAFy_qzSTZVR_h8U6oUaFUr-pMy1xAKAXxc"
 BOT_USERNAME = "Realfinancepaybot"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
-PORT = int(os.environ.get('PORT', 10000))
+PORT = int(os.environ.get("PORT", 10000))
 
 ADMIN_IDS = [1653918641]
 ADMIN_PASSWORD = "Ali97$"
@@ -63,6 +44,7 @@ REFERRAL_BONUS = 1_000_000
 MIN_WITHDRAW = 5_000_000
 REFI_PER_MILLION = 2.0
 MAX_PENDING_WITHDRAWALS = 3
+SESSION_TIMEOUT = 3600
 
 REQUIRED_CHANNELS = [
     {"name": "REFi Distribution", "username": "@Realfinance_REFI", "link": "https://t.me/Realfinance_REFI"},
@@ -70,155 +52,206 @@ REQUIRED_CHANNELS = [
     {"name": "Daily Airdrop", "username": "@Daily_AirdropX", "link": "https://t.me/Daily_AirdropX"}
 ]
 
-# === LOCAL CACHE ===
-local_db = {
+# ==================== LOCAL JSON DATABASE (FIREBASE READY) ====================
+DB_FILE = "bot_data.json"
+db_lock = threading.Lock()
+db = {
     "users": {},
     "withdrawals": {},
+    "admin_sessions": {},
     "stats": {"start_time": time.time()}
 }
 
-def load_from_firebase():
+def load_db():
+    """Load database from JSON file"""
     try:
-        data = firebase_ref.get()
-        if data:
-            if "users" in data:
-                local_db["users"] = data["users"]
-            if "withdrawals" in data:
-                local_db["withdrawals"] = data["withdrawals"]
-            if "stats" in data:
-                local_db["stats"] = data["stats"]
-        print(f"✅ Loaded {len(local_db['users'])} users from Firebase")
+        if os.path.exists(DB_FILE):
+            with open(DB_FILE, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+                db.update(loaded)
+                print(f"✅ Loaded {len(db['users'])} users from local JSON")
     except Exception as e:
-        print(f"⚠️ Firebase load error: {e}")
+        print(f"⚠️ Load error: {e}")
 
-def save_to_firebase():
-    try:
-        firebase_ref.update({
-            "users": local_db["users"],
-            "withdrawals": local_db["withdrawals"],
-            "stats": local_db["stats"]
-        })
-    except Exception as e:
-        print(f"⚠️ Firebase save error: {e}")
+def save_db():
+    """Save database to JSON file"""
+    with db_lock:
+        try:
+            with open(DB_FILE, "w", encoding="utf-8") as f:
+                json.dump(db, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"⚠️ Save error: {e}")
 
-load_from_firebase()
+load_db()
 
-# === USER FUNCTIONS ===
-def get_user(uid):
-    uid = str(uid)
-    if uid not in local_db["users"]:
-        chars = string.ascii_uppercase + string.digits
-        local_db["users"][uid] = {
-            "id": uid,
-            "username": "",
-            "first_name": "",
-            "joined_at": time.time(),
-            "last_active": time.time(),
-            "balance": 0,
-            "total_earned": 0,
-            "total_withdrawn": 0,
-            "referral_code": ''.join(random.choices(chars, k=8)),
-            "referred_by": None,
-            "referrals_count": 0,
-            "referrals": {},
-            "referral_clicks": 0,
-            "verified": False,
-            "wallet": None,
-            "is_admin": int(uid) in ADMIN_IDS,
-            "is_banned": False
-        }
-        save_to_firebase()
-    return local_db["users"][uid]
+# ==================== USER FUNCTIONS ====================
+def get_user(user_id):
+    """Get or create user"""
+    uid = str(user_id)
+    with db_lock:
+        if uid not in db["users"]:
+            chars = string.ascii_uppercase + string.digits
+            db["users"][uid] = {
+                "id": uid,
+                "username": "",
+                "first_name": "",
+                "joined_at": time.time(),
+                "last_active": time.time(),
+                "balance": 0,
+                "total_earned": 0,
+                "total_withdrawn": 0,
+                "referral_code": ''.join(random.choices(chars, k=8)),
+                "referred_by": None,
+                "referrals_count": 0,
+                "referrals": {},
+                "referral_clicks": 0,
+                "verified": False,
+                "verified_at": None,
+                "wallet": None,
+                "wallet_set_at": None,
+                "is_admin": int(uid) in ADMIN_IDS,
+                "is_banned": False
+            }
+            db["stats"]["total_users"] = len(db["users"])
+            save_db()
+        return db["users"][uid]
 
-def update_user(uid, **kwargs):
-    if uid in local_db["users"]:
-        local_db["users"][uid].update(kwargs)
-        local_db["users"][uid]["last_active"] = time.time()
-        save_to_firebase()
+def update_user(user_id, **kwargs):
+    """Update user data"""
+    uid = str(user_id)
+    with db_lock:
+        if uid in db["users"]:
+            db["users"][uid].update(kwargs)
+            db["users"][uid]["last_active"] = time.time()
+            save_db()
 
 def get_user_by_code(code):
-    for u in local_db["users"].values():
+    """Find user by referral code"""
+    for u in db["users"].values():
         if u.get("referral_code") == code:
             return u
     return None
 
 def get_user_by_username(username):
+    """Find user by username"""
     username = username.lower().lstrip('@')
-    for u in local_db["users"].values():
+    for u in db["users"].values():
         if u.get("username", "").lower() == username:
             return u
     return None
 
-# === WITHDRAWAL FUNCTIONS ===
+# ==================== WITHDRAWAL FUNCTIONS ====================
 def get_pending_withdrawals():
-    return [w for w in local_db["withdrawals"].values() if w.get("status") == "pending"]
+    """Get all pending withdrawals"""
+    return [w for w in db["withdrawals"].values() if w.get("status") == "pending"]
 
-def get_user_withdrawals(uid, status=None):
-    uid = str(uid)
-    wd = [w for w in local_db["withdrawals"].values() if w.get("user_id") == uid]
+def get_user_withdrawals(user_id, status=None):
+    """Get user withdrawals"""
+    uid = str(user_id)
+    withdrawals = [w for w in db["withdrawals"].values() if w.get("user_id") == uid]
     if status:
-        wd = [w for w in wd if w.get("status") == status]
-    return sorted(wd, key=lambda w: w.get("created_at", 0), reverse=True)
+        withdrawals = [w for w in withdrawals if w.get("status") == status]
+    return sorted(withdrawals, key=lambda w: w.get("created_at", 0), reverse=True)
 
-def create_withdrawal(uid, amount, wallet):
-    rid = f"W{int(time.time())}{uid}{random.randint(1000,9999)}"
-    local_db["withdrawals"][rid] = {
-        "id": rid,
-        "user_id": str(uid),
-        "amount": amount,
-        "wallet": wallet,
-        "status": "pending",
-        "created_at": time.time()
-    }
-    save_to_firebase()
+def create_withdrawal(user_id, amount, wallet):
+    """Create withdrawal request"""
+    rid = f"W{int(time.time())}{user_id}{random.randint(1000,9999)}"
+    with db_lock:
+        db["withdrawals"][rid] = {
+            "id": rid,
+            "user_id": str(user_id),
+            "amount": amount,
+            "wallet": wallet,
+            "status": "pending",
+            "created_at": time.time()
+        }
+        save_db()
     return rid
 
 def process_withdrawal(rid, admin_id, status):
-    w = local_db["withdrawals"].get(rid)
-    if not w or w["status"] != "pending":
-        return False
-    w["status"] = status
-    w["processed_at"] = time.time()
-    w["processed_by"] = admin_id
-    if status == "rejected":
-        user = local_db["users"].get(w["user_id"])
-        if user:
-            user["balance"] += w["amount"]
-    save_to_firebase()
-    return True
+    """Process withdrawal (approve/reject)"""
+    with db_lock:
+        w = db["withdrawals"].get(rid)
+        if not w or w["status"] != "pending":
+            return False
+        w["status"] = status
+        w["processed_at"] = time.time()
+        w["processed_by"] = admin_id
+        if status == "rejected":
+            user = db["users"].get(w["user_id"])
+            if user:
+                user["balance"] += w["amount"]
+        save_db()
+        return True
 
-# === STATS ===
+# ==================== ADMIN SESSION FUNCTIONS ====================
+def is_admin_logged_in(admin_id):
+    """Check if admin has valid session"""
+    return db["admin_sessions"].get(str(admin_id), 0) > time.time()
+
+def admin_login(admin_id):
+    """Create admin session"""
+    with db_lock:
+        db["admin_sessions"][str(admin_id)] = time.time() + SESSION_TIMEOUT
+        save_db()
+
+def admin_logout(admin_id):
+    """End admin session"""
+    with db_lock:
+        db["admin_sessions"].pop(str(admin_id), None)
+        save_db()
+
+# ==================== STATS ====================
 def get_stats():
-    users = local_db["users"].values()
+    """Get bot statistics"""
+    users = db["users"].values()
     now = time.time()
     return {
         "total_users": len(users),
         "verified": sum(1 for u in users if u.get("verified")),
         "banned": sum(1 for u in users if u.get("is_banned")),
         "active_today": sum(1 for u in users if u.get("last_active", 0) > now - 86400),
+        "active_week": sum(1 for u in users if u.get("last_active", 0) > now - 604800),
         "total_balance": sum(u.get("balance", 0) for u in users),
         "total_earned": sum(u.get("total_earned", 0) for u in users),
+        "total_withdrawn": db["stats"].get("total_withdrawn", 0),
         "pending_withdrawals": len(get_pending_withdrawals()),
         "total_referrals": sum(u.get("referrals_count", 0) for u in users),
-        "uptime": int(now - local_db["stats"].get("start_time", now))
+        "uptime": int(now - db["stats"].get("start_time", now))
     }
 
-# === UTILITIES ===
+# ==================== UTILITIES ====================
 def format_refi(refi):
+    """Format REFi with USD value"""
     usd = (refi / 1_000_000) * REFI_PER_MILLION
     return f"{refi:,} REFi (~${usd:.2f})"
 
-def short_wallet(w):
-    return f"{w[:6]}...{w[-4:]}" if w and len(w) > 10 else "Not set"
+def short_wallet(wallet):
+    """Shorten wallet address for display"""
+    if not wallet or len(wallet) < 10:
+        return "Not set"
+    return f"{wallet[:6]}...{wallet[-4:]}"
 
-def is_valid_wallet(w):
-    return w and w.startswith('0x') and len(w) == 42
+def is_valid_wallet(wallet):
+    """Validate Ethereum wallet address"""
+    if not wallet or not wallet.startswith('0x'):
+        return False
+    if len(wallet) != 42:
+        return False
+    try:
+        int(wallet[2:], 16)
+        return True
+    except ValueError:
+        return False
 
-def get_date(t=None):
-    return time.strftime('%Y-%m-%d %H:%M', time.localtime(t if t else time.time()))
+def get_date(timestamp=None):
+    """Get formatted date"""
+    dt = datetime.fromtimestamp(timestamp) if timestamp else datetime.now()
+    return dt.strftime('%Y-%m-%d %H:%M')
 
-# === KEYBOARDS ===
+# ==================== KEYBOARDS ====================
 def channels_keyboard():
+    """Channel verification keyboard"""
     kb = []
     for ch in REQUIRED_CHANNELS:
         kb.append([{"text": f"📢 Join {ch['name']}", "url": ch["link"]}])
@@ -226,6 +259,7 @@ def channels_keyboard():
     return {"inline_keyboard": kb}
 
 def main_keyboard(user):
+    """Main menu with 2x2 grid"""
     kb = [
         [
             {"text": "💰 Balance", "callback_data": "balance"},
@@ -236,16 +270,20 @@ def main_keyboard(user):
             {"text": "👛 Wallet", "callback_data": "wallet"}
         ]
     ]
+    # Show Withdraw button if wallet exists
     if user.get("wallet"):
         kb[1][1] = {"text": "💸 Withdraw", "callback_data": "withdraw"}
+    # Show Admin button if user is admin
     if user.get("is_admin"):
         kb.append([{"text": "👑 Admin Panel", "callback_data": "admin"}])
     return {"inline_keyboard": kb}
 
 def back_keyboard():
+    """Back button only"""
     return {"inline_keyboard": [[{"text": "🔙 Back to Menu", "callback_data": "back"}]]}
 
 def admin_keyboard():
+    """Admin panel keyboard"""
     return {"inline_keyboard": [
         [{"text": "📊 Statistics", "callback_data": "admin_stats"}],
         [{"text": "💰 Pending Withdrawals", "callback_data": "admin_pending"}],
@@ -256,6 +294,7 @@ def admin_keyboard():
     ]}
 
 def withdrawal_keyboard(rid):
+    """Withdrawal action buttons"""
     return {"inline_keyboard": [
         [
             {"text": "✅ Approve", "callback_data": f"approve_{rid}"},
@@ -264,8 +303,9 @@ def withdrawal_keyboard(rid):
         [{"text": "🔙 Back", "callback_data": "admin_pending"}]
     ]}
 
-# === TELEGRAM API ===
+# ==================== TELEGRAM API ====================
 def send_message(chat_id, text, keyboard=None):
+    """Send message via Telegram API"""
     try:
         return requests.post(f"{API_URL}/sendMessage", json={
             "chat_id": chat_id,
@@ -274,10 +314,11 @@ def send_message(chat_id, text, keyboard=None):
             "reply_markup": keyboard
         }, timeout=10)
     except Exception as e:
-        print(f"Send error: {e}")
+        print(f"❌ Send error: {e}")
         return None
 
 def edit_message(chat_id, msg_id, text, keyboard=None):
+    """Edit message"""
     try:
         return requests.post(f"{API_URL}/editMessageText", json={
             "chat_id": chat_id,
@@ -287,18 +328,20 @@ def edit_message(chat_id, msg_id, text, keyboard=None):
             "reply_markup": keyboard
         }, timeout=10)
     except Exception as e:
-        print(f"Edit error: {e}")
+        print(f"❌ Edit error: {e}")
         return None
 
 def answer_callback(callback_id):
+    """Answer callback query"""
     try:
         requests.post(f"{API_URL}/answerCallbackQuery", json={
             "callback_query_id": callback_id
         }, timeout=5)
     except Exception as e:
-        print(f"Callback error: {e}")
+        print(f"❌ Callback error: {e}")
 
 def get_chat_member(chat_id, user_id):
+    """Check channel membership"""
     try:
         r = requests.get(f"{API_URL}/getChatMember", params={
             "chat_id": chat_id,
@@ -306,24 +349,37 @@ def get_chat_member(chat_id, user_id):
         }, timeout=5)
         return r.json().get("result", {}).get("status")
     except Exception as e:
-        print(f"ChatMember error: {e}")
+        print(f"❌ ChatMember error: {e}")
         return None
 
-# === WEB SERVER ===
+# ==================== WEB SERVER ====================
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
+        self.send_header('Content-type', 'text/html; charset=utf-8')
         self.end_headers()
-        self.wfile.write(b"OK")
+        stats = get_stats()
+        html = f"""<!DOCTYPE html>
+<html>
+<head><title>🤖 REFi Bot</title></head>
+<body style="font-family:sans-serif;text-align:center;padding:50px;">
+    <h1>🤖 REFi Bot</h1>
+    <p style="color:green">🟢 RUNNING</p>
+    <p>Users: {stats['total_users']} | Verified: {stats['verified']}</p>
+    <p><small>{get_date()}</small></p>
+</body>
+</html>"""
+        self.wfile.write(html.encode('utf-8'))
     def log_message(self, *args): pass
 
 threading.Thread(target=lambda: HTTPServer(('0.0.0.0', PORT), HealthHandler).serve_forever(), daemon=True).start()
-print(f"🌐 Web on {PORT}")
+print(f"🌐 Web server on port {PORT}")
 
-# === HANDLERS ===
+# ==================== HANDLERS ====================
 user_states = {}
 
 def handle_start(message):
+    """Handle /start command"""
     chat_id = message["chat"]["id"]
     user = message["from"]
     user_id = user["id"]
@@ -362,6 +418,8 @@ def handle_start(message):
     send_message(chat_id, text, channels_keyboard())
 
 def handle_verify(callback, user_id, chat_id, message_id):
+    """Handle verify button"""
+    # Check channels
     not_joined = []
     for ch in REQUIRED_CHANNELS:
         status = get_chat_member(ch["username"], user_id)
@@ -387,6 +445,7 @@ def handle_verify(callback, user_id, chat_id, message_id):
                 balance=new_balance,
                 total_earned=user_data.get("total_earned", 0) + WELCOME_BONUS)
     
+    # Process referral
     referred_by = user_data.get("referred_by")
     if referred_by:
         referrer = get_user(int(referred_by))
@@ -408,6 +467,7 @@ def handle_verify(callback, user_id, chat_id, message_id):
     print(f"✅ User {user_id} verified")
 
 def handle_balance(callback, user_id, chat_id, message_id):
+    """Show balance"""
     user_data = get_user(user_id)
     text = (
         f"💰 *Your Balance*\n\n"
@@ -419,6 +479,7 @@ def handle_balance(callback, user_id, chat_id, message_id):
     edit_message(chat_id, message_id, text, back_keyboard())
 
 def handle_referral(callback, user_id, chat_id, message_id):
+    """Show referral link"""
     user_data = get_user(user_id)
     link = f"https://t.me/{BOT_USERNAME}?start={user_data.get('referral_code', '')}"
     earned = user_data.get('referrals_count', 0) * REFERRAL_BONUS
@@ -433,6 +494,7 @@ def handle_referral(callback, user_id, chat_id, message_id):
     edit_message(chat_id, message_id, text, back_keyboard())
 
 def handle_stats(callback, user_id, chat_id, message_id):
+    """Show statistics"""
     user_data = get_user(user_id)
     joined = get_date(user_data.get("joined_at", 0))
     
@@ -448,6 +510,7 @@ def handle_stats(callback, user_id, chat_id, message_id):
     edit_message(chat_id, message_id, text, back_keyboard())
 
 def handle_wallet(callback, user_id, chat_id, message_id):
+    """Start wallet setup"""
     user_data = get_user(user_id)
     current = user_data.get("wallet", "Not set")
     
@@ -461,6 +524,7 @@ def handle_wallet(callback, user_id, chat_id, message_id):
     user_states[user_id] = "waiting_wallet"
 
 def handle_withdraw(callback, user_id, chat_id, message_id):
+    """Start withdrawal process"""
     user_data = get_user(user_id)
     
     if not user_data.get("verified"):
@@ -496,42 +560,105 @@ def handle_withdraw(callback, user_id, chat_id, message_id):
     user_states[user_id] = "waiting_withdraw"
 
 def handle_back(callback, user_id, chat_id, message_id):
+    """Back to main menu"""
     user_data = get_user(user_id)
     text = f"🎯 *Main Menu*\n\n💰 Balance: {format_refi(user_data.get('balance', 0))}"
     edit_message(chat_id, message_id, text, main_keyboard(user_data))
 
 def handle_admin_panel(callback, user_id, chat_id, message_id):
+    """Show admin panel"""
     if user_id not in ADMIN_IDS:
         return
     
     stats = get_stats()
+    hours = stats['uptime'] // 3600
+    minutes = (stats['uptime'] % 3600) // 60
+    
     text = (
         f"👑 *Admin Panel*\n\n"
-        f"• Total users: {stats['total_users']}\n"
-        f"• Verified: {stats['verified']}\n"
+        f"• Total users: {stats['total_users']} (✅ {stats['verified']})\n"
         f"• Banned: {stats['banned']}\n"
         f"• Active today: {stats['active_today']}\n"
         f"• Total balance: {format_refi(stats['total_balance'])}\n"
         f"• Pending withdrawals: {stats['pending_withdrawals']}\n"
-        f"• Uptime: {stats['uptime'] // 3600}h {(stats['uptime'] % 3600) // 60}m"
+        f"• Uptime: {hours}h {minutes}m"
     )
     edit_message(chat_id, message_id, text, admin_keyboard())
 
+# ==================== ADMIN HANDLERS ====================
+def handle_admin_login(message):
+    """Handle /admin command"""
+    chat_id = message["chat"]["id"]
+    user_id = message["from"]["id"]
+    
+    if user_id not in ADMIN_IDS:
+        send_message(chat_id, "⛔ Unauthorized")
+        return
+    
+    if is_admin_logged_in(user_id):
+        stats = get_stats()
+        hours = stats['uptime'] // 3600
+        minutes = (stats['uptime'] % 3600) // 60
+        text = (
+            f"👑 *Admin Panel*\n\n"
+            f"• Users: {stats['total_users']} (✅ {stats['verified']})\n"
+            f"• Balance: {format_refi(stats['total_balance'])}\n"
+            f"• Pending: {stats['pending_withdrawals']}\n"
+            f"• Uptime: {hours}h {minutes}m"
+        )
+        send_message(chat_id, text, admin_keyboard())
+        return
+    
+    send_message(chat_id, "🔐 *Admin Login*\n\nEnter password:")
+    user_states[user_id] = "admin_login"
+
+def handle_admin_login_input(text, user_id, chat_id):
+    """Process admin login"""
+    if text == ADMIN_PASSWORD:
+        admin_login(user_id)
+        send_message(chat_id, "✅ Login successful!")
+        
+        stats = get_stats()
+        hours = stats['uptime'] // 3600
+        minutes = (stats['uptime'] % 3600) // 60
+        text = (
+            f"👑 *Admin Panel*\n\n"
+            f"• Users: {stats['total_users']} (✅ {stats['verified']})\n"
+            f"• Balance: {format_refi(stats['total_balance'])}\n"
+            f"• Pending: {stats['pending_withdrawals']}\n"
+            f"• Uptime: {hours}h {minutes}m"
+        )
+        send_message(chat_id, text, admin_keyboard())
+    else:
+        send_message(chat_id, "❌ Wrong password!")
+
 def handle_admin_stats(callback, chat_id, message_id):
+    """Show detailed statistics"""
     stats = get_stats()
+    hours = stats['uptime'] // 3600
+    minutes = (stats['uptime'] % 3600) // 60
+    
     text = (
         f"📊 *Detailed Statistics*\n\n"
-        f"👥 Users: {stats['total_users']} (✅ {stats['verified']})\n"
-        f"🚫 Banned: {stats['banned']}\n"
-        f"📅 Active today: {stats['active_today']}\n"
-        f"💰 Balance: {format_refi(stats['total_balance'])}\n"
-        f"📈 Total earned: {format_refi(stats['total_earned'])}\n"
-        f"⏳ Pending: {stats['pending_withdrawals']}\n"
-        f"🤝 Referrals: {stats['total_referrals']}"
+        f"👥 *Users*\n"
+        f"• Total: {stats['total_users']}\n"
+        f"• Verified: {stats['verified']}\n"
+        f"• Banned: {stats['banned']}\n"
+        f"• Active today: {stats['active_today']}\n"
+        f"• Active week: {stats['active_week']}\n\n"
+        f"💰 *Financial*\n"
+        f"• Total balance: {format_refi(stats['total_balance'])}\n"
+        f"• Total earned: {format_refi(stats['total_earned'])}\n"
+        f"• Total withdrawn: {format_refi(stats['total_withdrawn'])}\n"
+        f"• Pending withdrawals: {stats['pending_withdrawals']}\n\n"
+        f"📈 *Referrals*\n"
+        f"• Total: {stats['total_referrals']}\n\n"
+        f"⏱️ *Uptime: {hours}h {minutes}m*"
     )
     edit_message(chat_id, message_id, text, admin_keyboard())
 
 def handle_admin_pending(callback, chat_id, message_id):
+    """Show pending withdrawals"""
     pending = get_pending_withdrawals()
     
     if not pending:
@@ -543,60 +670,61 @@ def handle_admin_pending(callback, chat_id, message_id):
     
     for w in pending[:5]:
         user = get_user(int(w["user_id"]))
-        text += f"🆔 `{w['id'][:8]}` - {user.get('first_name', 'Unknown')}: {format_refi(w['amount'])}\n"
+        name = user.get("first_name", "Unknown")
+        username = f"@{user.get('username', '')}" if user.get('username') else "No username"
+        text += f"🆔 `{w['id'][:8]}`\n👤 {name} {username}\n💰 {format_refi(w['amount'])}\n📅 {get_date(w['created_at'])}\n\n"
         kb["inline_keyboard"].append([{"text": f"Process {w['id'][:8]}", "callback_data": f"process_{w['id']}"}])
     
     if len(pending) > 5:
-        text += f"\n... and {len(pending) - 5} more\n"
+        text += f"*... and {len(pending) - 5} more*\n\n"
     
     kb["inline_keyboard"].append([{"text": "🔙 Back", "callback_data": "admin"}])
     edit_message(chat_id, message_id, text, kb)
 
 def handle_process(callback, chat_id, message_id, rid):
-    w = local_db["withdrawals"].get(rid)
+    """Show withdrawal details"""
+    w = db["withdrawals"].get(rid)
     if not w:
         return
     
     user = get_user(int(w["user_id"]))
+    
     text = (
         f"💰 *Withdrawal Details*\n\n"
-        f"Request: `{rid}`\n"
-        f"User: {user.get('first_name', 'Unknown')}\n"
-        f"Amount: {format_refi(w['amount'])}\n"
-        f"Wallet: {w['wallet']}\n"
-        f"Date: {get_date(w['created_at'])}"
+        f"📝 Request: `{rid}`\n"
+        f"👤 User: {user.get('first_name', 'Unknown')} (@{user.get('username', '')})\n"
+        f"🆔 ID: `{w['user_id']}`\n"
+        f"💰 Amount: {format_refi(w['amount'])}\n"
+        f"📮 Wallet: `{w['wallet']}`\n"
+        f"📅 Created: {get_date(w['created_at'])}"
     )
     edit_message(chat_id, message_id, text, withdrawal_keyboard(rid))
 
 def handle_approve(callback, admin_id, chat_id, message_id, rid):
-    w = local_db["withdrawals"].get(rid)
-    if w and w["status"] == "pending":
-        w["status"] = "approved"
-        w["processed_at"] = time.time()
-        w["processed_by"] = admin_id
-        save_to_firebase()
-        send_message(int(w["user_id"]), f"✅ Your withdrawal of {format_refi(w['amount'])} has been approved!")
-    
+    """Approve withdrawal"""
+    if process_withdrawal(rid, admin_id, "approved"):
+        w = db["withdrawals"].get(rid)
+        if w:
+            send_message(int(w["user_id"]),
+                        f"✅ *Withdrawal Approved!*\n\nRequest: `{rid[:8]}...`\nAmount: {format_refi(w['amount'])}")
     handle_admin_pending(callback, chat_id, message_id)
 
 def handle_reject(callback, admin_id, chat_id, message_id, rid):
-    w = local_db["withdrawals"].get(rid)
-    if w and w["status"] == "pending":
-        w["status"] = "rejected"
-        w["processed_at"] = time.time()
-        w["processed_by"] = admin_id
-        user = get_user(int(w["user_id"]))
-        user["balance"] += w["amount"]
-        save_to_firebase()
-        send_message(int(w["user_id"]), f"❌ Your withdrawal of {format_refi(w['amount'])} has been rejected. Amount returned.")
-    
+    """Reject withdrawal"""
+    if process_withdrawal(rid, admin_id, "rejected"):
+        w = db["withdrawals"].get(rid)
+        if w:
+            send_message(int(w["user_id"]),
+                        f"❌ *Withdrawal Rejected*\n\nRequest: `{rid[:8]}...`\nAmount: {format_refi(w['amount'])}")
     handle_admin_pending(callback, chat_id, message_id)
 
 def handle_admin_search(callback, chat_id, message_id):
-    edit_message(chat_id, message_id, "🔍 Send the user ID or @username to search:")
+    """Initiate user search"""
+    edit_message(chat_id, message_id, "🔍 *Send User ID or @username:*")
     user_states[callback["from"]["id"]] = "admin_search"
 
 def handle_admin_search_input(text, admin_id, chat_id):
+    """Process user search"""
     user = None
     if text.isdigit():
         user = get_user(int(text))
@@ -608,6 +736,8 @@ def handle_admin_search_input(text, admin_id, chat_id):
         send_message(chat_id, f"❌ User not found: {text}")
         return
     
+    pending = len(get_user_withdrawals(int(user["id"]), "pending"))
+    
     text = (
         f"👤 *User Found*\n\n"
         f"ID: `{user['id']}`\n"
@@ -616,18 +746,21 @@ def handle_admin_search_input(text, admin_id, chat_id):
         f"Balance: {format_refi(user.get('balance', 0))}\n"
         f"Referrals: {user.get('referrals_count', 0)}\n"
         f"Verified: {'✅' if user.get('verified') else '❌'}\n"
-        f"Wallet: {short_wallet(user.get('wallet', ''))}"
+        f"Wallet: {short_wallet(user.get('wallet', ''))}\n"
+        f"Pending withdrawals: {pending}"
     )
     send_message(chat_id, text, admin_keyboard())
 
 def handle_admin_broadcast(callback, chat_id, message_id):
-    edit_message(chat_id, message_id, f"📢 Send the message to broadcast to {len(local_db['users'])} users:")
+    """Initiate broadcast"""
+    edit_message(chat_id, message_id, f"📢 *Broadcast*\n\nSend message to {len(db['users'])} users:")
     user_states[callback["from"]["id"]] = "admin_broadcast"
 
 def handle_admin_broadcast_input(text, admin_id, chat_id):
-    send_message(chat_id, f"📢 Broadcasting to {len(local_db['users'])} users...")
+    """Process broadcast"""
+    send_message(chat_id, f"📢 Broadcasting to {len(db['users'])} users...")
     sent, failed = 0, 0
-    for uid in local_db["users"].keys():
+    for uid in db["users"].keys():
         try:
             send_message(int(uid), text)
             sent += 1
@@ -635,32 +768,41 @@ def handle_admin_broadcast_input(text, admin_id, chat_id):
                 time.sleep(0.5)
         except:
             failed += 1
-    send_message(chat_id, f"✅ Broadcast complete!\n\nSent: {sent}\nFailed: {failed}", admin_keyboard())
+    send_message(chat_id, f"✅ *Broadcast Complete*\n\nSent: {sent}\nFailed: {failed}", admin_keyboard())
 
 def handle_admin_users(callback, chat_id, message_id):
-    users = sorted(local_db["users"].values(), key=lambda u: u.get("joined_at", 0), reverse=True)[:10]
+    """Show recent users"""
+    users = sorted(db["users"].values(), key=lambda u: u.get("joined_at", 0), reverse=True)[:10]
     text = "👥 *Recent Users*\n\n"
     for u in users:
         name = u.get("first_name", "Unknown")
+        username = f"@{u.get('username', '')}" if u.get('username') else "No username"
         verified = "✅" if u.get("verified") else "❌"
-        text += f"{verified} {name} (@{u.get('username', 'None')})\n"
-    text += f"\nTotal users: {len(local_db['users'])}"
+        joined = get_date(u.get("joined_at", 0)).split()[0]
+        text += f"{verified} {name} {username} - {joined}\n"
+    text += f"\n*Total: {len(db['users'])} users*"
     edit_message(chat_id, message_id, text, admin_keyboard())
 
 def handle_admin_logout(callback, admin_id, chat_id, message_id):
+    """Logout from admin panel"""
+    admin_logout(admin_id)
     user_data = get_user(admin_id)
-    text = f"🔒 Logged out\n\n💰 Balance: {format_refi(user_data.get('balance', 0))}"
+    text = f"🔒 *Logged out*\n\n💰 Balance: {format_refi(user_data.get('balance', 0))}"
     edit_message(chat_id, message_id, text, main_keyboard(user_data))
 
+# ==================== INPUT HANDLERS ====================
 def handle_wallet_input(text, user_id, chat_id):
+    """Save wallet address"""
     if is_valid_wallet(text):
-        update_user(user_id, wallet=text)
+        update_user(user_id, wallet=text, wallet_set_at=time.time())
         user_data = get_user(user_id)
         send_message(chat_id, f"✅ *Wallet saved!*\n\n{short_wallet(text)}", main_keyboard(user_data))
+        print(f"👛 Wallet set for user {user_id}")
     else:
         send_message(chat_id, "❌ Invalid wallet address! Must start with 0x and be 42 characters.")
 
 def handle_withdraw_input(text, user_id, chat_id):
+    """Process withdrawal amount"""
     try:
         amount = int(text.replace(",", ""))
     except:
@@ -685,16 +827,25 @@ def handle_withdraw_input(text, user_id, chat_id):
     rid = create_withdrawal(user_id, amount, user_data["wallet"])
     update_user(user_id, balance=user_data["balance"] - amount)
     send_message(chat_id, f"✅ *Withdrawal requested!*\n\nRequest ID: `{rid[:8]}...`\nAmount: {format_refi(amount)}", main_keyboard(user_data))
+    print(f"💰 Withdrawal created: {rid} for {amount} REFi")
     
     for aid in ADMIN_IDS:
         send_message(aid,
                     f"💰 *New Withdrawal Request*\n\n"
-                    f"User: {user_data.get('first_name', 'Unknown')}\n"
+                    f"User: {user_data.get('first_name', 'Unknown')} (@{user_data.get('username', '')})\n"
                     f"Amount: {format_refi(amount)}\n"
                     f"Wallet: {user_data['wallet']}\n"
                     f"Request ID: `{rid}`")
 
-# === MAIN LOOP ===
+# ==================== CLEAR OLD SESSIONS ====================
+try:
+    requests.post(f"{API_URL}/deleteWebhook", json={"drop_pending_updates": True})
+    requests.get(f"{API_URL}/getUpdates", params={"offset": -1})
+    print("✅ Old sessions cleared")
+except:
+    pass
+
+# ==================== MAIN LOOP ====================
 print("🚀 Starting bot...")
 offset = 0
 
@@ -709,16 +860,24 @@ while True:
         
         if data.get("ok"):
             for upd in data.get("result", []):
+                # Process messages
                 if "message" in upd:
                     msg = upd["message"]
                     chat_id = msg["chat"]["id"]
                     user_id = msg["from"]["id"]
                     text = msg.get("text", "")
                     
+                    if get_user(user_id).get("is_banned"):
+                        send_message(chat_id, "⛔ You are banned")
+                        offset = upd["update_id"] + 1
+                        continue
+                    
                     if text == "/start":
                         handle_start(msg)
                     elif text == "/admin":
-                        handle_admin_panel(None, user_id, chat_id, None)
+                        handle_admin_login(msg)
+                    elif text.startswith("/"):
+                        send_message(chat_id, "❌ Unknown command")
                     else:
                         state = user_states.get(user_id)
                         if state == "waiting_wallet":
@@ -727,6 +886,9 @@ while True:
                         elif state == "waiting_withdraw":
                             handle_withdraw_input(text, user_id, chat_id)
                             user_states.pop(user_id, None)
+                        elif state == "admin_login":
+                            handle_admin_login_input(text, user_id, chat_id)
+                            user_states.pop(user_id, None)
                         elif state == "admin_search":
                             handle_admin_search_input(text, user_id, chat_id)
                             user_states.pop(user_id, None)
@@ -734,6 +896,7 @@ while True:
                             handle_admin_broadcast_input(text, user_id, chat_id)
                             user_states.pop(user_id, None)
                 
+                # Process callback queries
                 elif "callback_query" in upd:
                     cb = upd["callback_query"]
                     data = cb.get("data", "")
@@ -743,6 +906,7 @@ while True:
                     
                     answer_callback(cb["id"])
                     
+                    # User callbacks
                     if data == "verify":
                         handle_verify(cb, user_id, chat_id, msg_id)
                     elif data == "balance":
@@ -759,6 +923,8 @@ while True:
                         handle_back(cb, user_id, chat_id, msg_id)
                     elif data == "admin":
                         handle_admin_panel(cb, user_id, chat_id, msg_id)
+                    
+                    # Admin callbacks
                     elif data == "admin_stats":
                         handle_admin_stats(cb, chat_id, msg_id)
                     elif data == "admin_pending":
