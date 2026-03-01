@@ -165,13 +165,13 @@ def keep_alive():
     while True:
         try:
             requests.get(f"http://localhost:{PORT}", timeout=5)
-            print("💓 Keep alive ping sent")
         except:
             pass
         time.sleep(300)
 
 # ==================== KEYBOARDS ====================
 def channels_kb():
+    """أزرار القنوات (عائمة) للتحقق"""
     kb = []
     for ch in REQUIRED_CHANNELS:
         kb.append([{"text": f"📢 Join {ch['name']}", "url": ch["link"]}])
@@ -179,21 +179,20 @@ def channels_kb():
     return {"inline_keyboard": kb}
 
 def main_kb(user):
-    # الصف الأول: الرصيد والإحالة
-    row1 = [
-        {"text": "💰 Balance", "callback_data": "bal"},
-        {"text": "🔗 Referral", "callback_data": "ref"}
+    """القائمة الرئيسية - أزرار عائمة مرتبة"""
+    kb = [
+        [{"text": "💰 Balance", "callback_data": "bal"}],
+        [{"text": "🔗 Referral", "callback_data": "ref"}],
+        [{"text": "📊 Statistics", "callback_data": "stats"}]
     ]
     
-    # الصف الثاني: الإحصائيات والسحب
-    row2 = [
-        {"text": "📊 Statistics", "callback_data": "stats"},
-        {"text": "💸 Withdraw", "callback_data": "wd"}
-    ]
+    # إضافة زر السحب إذا كانت المحفظة موجودة
+    if user.get("wallet"):
+        kb.append([{"text": "💸 Withdraw", "callback_data": "wd"}])
+    else:
+        kb.append([{"text": "👛 Set Wallet", "callback_data": "wallet"}])
     
-    kb = [row1, row2]
-    
-    # زر المشرف للمشرفين فقط
+    # زر المشرف للمشرفين
     if int(user["id"]) in ADMIN_IDS and is_admin_logged_in(int(user["id"])):
         kb.append([{"text": "👑 Admin Panel", "callback_data": "admin"}])
     
@@ -233,7 +232,6 @@ def send(chat_id, text, kb=None):
             payload["reply_markup"] = kb
             
         requests.post(f"{API_URL}/sendMessage", json=payload, timeout=10)
-        print(f"📤 Sent to {chat_id}")
     except Exception as e:
         print(f"❌ Send error: {e}")
 
@@ -249,7 +247,6 @@ def edit(chat_id, msg_id, text, kb=None):
             payload["reply_markup"] = kb
             
         requests.post(f"{API_URL}/editMessageText", json=payload, timeout=10)
-        print(f"✏️ Edited message {msg_id}")
     except Exception as e:
         print(f"❌ Edit error: {e}")
 
@@ -273,7 +270,6 @@ def get_member(chat_id, user_id):
 def post_to_channel(text):
     try:
         requests.post(f"{API_URL}/sendMessage", json={"chat_id": PAYMENT_CHANNEL, "text": text, "parse_mode": "Markdown"}, timeout=10)
-        print(f"📢 Posted to channel")
     except:
         pass
 
@@ -349,7 +345,9 @@ def handle_start(msg):
             update_user(referrer_id, referral_clicks=referrer["referral_clicks"])
             
             # إشعار المُحيل
-            send(referrer_id, f"👋 *Someone clicked your referral link!*\n\nThey haven't verified yet. Once they verify, you'll get {format_refi(REFERRAL_BONUS)}!")
+            send(referrer_id, 
+                 f"👋 *Someone clicked your referral link!*\n\n"
+                 f"They haven't verified yet. Once they verify, you'll get {format_refi(REFERRAL_BONUS)}!")
     
     # إذا كان المستخدم محققاً مسبقاً
     if u.get("verified"):
@@ -404,17 +402,21 @@ def handle_start(msg):
                 send(referred_by, 
                      f"🎉 *Congratulations!*\n\n"
                      f"Your friend {u.get('first_name', 'Someone')} just verified!\n"
-                     f"✨ You earned {format_refi(REFERRAL_BONUS)}!\n"
-                     f"💰 New balance: {format_refi(ref_new_balance)}")
+                     f"✨ You earned {format_refi(REFERRAL_BONUS)}!")
         
         # رسالة النجاح مع الأزرار
         success = f"✅ *Verification Successful!*\n\n✨ Added {format_refi(WELCOME_BONUS)}\n💰 Current balance: {format_refi(new_balance)}"
         send(chat_id, success, main_kb(u))
     else:
-        # رسالة المطالبة بالانضمام للقنوات
-        channels_list = "\n".join([f"• {ch}" for ch in not_joined])
-        msg = f"📢 *Please join these channels first:*\n{channels_list}\n\n👇 After joining, click VERIFY"
-        send(chat_id, msg, channels_kb())
+        # رسالة الترحيب مع أزرار القنوات (كما تريدها بالضبط)
+        channels_text = "\n".join([f"• {ch['name']}" for ch in REQUIRED_CHANNELS])
+        welcome_msg = (
+            f"🎉 *Welcome to REFi Bot!*\n\n"
+            f"💰 Welcome: {format_refi(WELCOME_BONUS)}\n"
+            f"👥 Referral: {format_refi(REFERRAL_BONUS)} per friend\n\n"
+            f"📢 Join:\n{channels_text}"
+        )
+        send(chat_id, welcome_msg, channels_kb())
 
 def handle_verify(cb, user_id, chat_id, msg_id):
     print(f"\n🔍 VERIFY: User {user_id}")
@@ -477,8 +479,7 @@ def handle_verify(cb, user_id, chat_id, msg_id):
             send(referred_by, 
                  f"🎉 *Congratulations!*\n\n"
                  f"Your friend {u.get('first_name', 'Someone')} just verified!\n"
-                 f"✨ You earned {format_refi(REFERRAL_BONUS)}!\n"
-                 f"💰 New balance: {format_refi(ref_new_balance)}")
+                 f"✨ You earned {format_refi(REFERRAL_BONUS)}!")
     
     # رسالة النجاح مع الأزرار
     success = f"✅ *Verification Successful!*\n\n✨ Added {format_refi(WELCOME_BONUS)}\n💰 Current balance: {format_refi(new_balance)}"
@@ -535,7 +536,7 @@ def handle_withdraw(cb, user_id, chat_id, msg_id):
     if not u["wallet"]:
         wallet_msg = (
             f"💸 *Withdrawal Setup*\n\n"
-            f"Please send your Ethereum wallet address:\n"
+            f"Please send your Bep20 wallet address from trust wallet:\n"
             f"• Must start with `0x`\n"
             f"• Must be 42 characters long\n\n"
             f"Example:\n"
@@ -739,6 +740,7 @@ def handle_wallet_input(txt, user_id, chat_id):
         )
         send(chat_id, amount_msg, cancel_kb())
         states[user_id] = "waiting_amount"
+        print(f"👛 User {user_id} saved wallet")
     else:
         send(chat_id, "❌ Invalid wallet address!")
 
@@ -782,6 +784,7 @@ def handle_amount_input(txt, user_id, chat_id):
     post_to_channel(channel_msg)
     
     send(chat_id, f"✅ *Withdrawal Request Submitted!*\n\nRequest ID: `{rid[:8]}...`\nAmount: {format_refi(amount)}", main_kb(u))
+    print(f"💰 User {user_id} requested withdrawal of {amount} REFi")
 
 # ==================== MAIN LOOP ====================
 print("🚀 Starting bot...")
@@ -841,6 +844,8 @@ while True:
                         handle_stats(cb, user_id, chat_id, msg_id)
                     elif data == "wd":
                         handle_withdraw(cb, user_id, chat_id, msg_id)
+                    elif data == "wallet":
+                        handle_set_wallet(cb, user_id, chat_id, msg_id)
                     elif data == "back":
                         handle_back(cb, user_id, chat_id, msg_id)
                     elif data == "admin":
