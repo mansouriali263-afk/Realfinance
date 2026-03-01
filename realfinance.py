@@ -11,8 +11,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 print = lambda x: (sys.stdout.write(x + "\n"), sys.stdout.flush())[0]
 
 # ==================== CONFIG ====================
-BOT_TOKEN = "8720874613:AAFy_qzSTZVR_h8U6oUaFUr-pMy1xAKAXxc"
-BOT_USERNAME = "Realfinancepaybot"
+BOT_TOKEN = "7823073143:AAEpY2NpDzs14u3V5RebgW-THiaHjeJRKpQ"
+BOT_USERNAME = "RealnetworkPaybot"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 PORT = int(os.environ.get('PORT', 10000))
 
