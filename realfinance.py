@@ -107,15 +107,31 @@ def get_stats():
         "uptime": int(now - db["stats"].get("start_time", now))
     }
 
-# ==================== KEEP ALIVE SYSTEM ====================
+# ==================== KEEP ALIVE SYSTEM (يمنع النوم) ====================
 def keep_alive():
+    """هذا النظام يرسل إشارات كل 5 دقائق ليمنع النوم"""
     while True:
         try:
+            # نرسل طلب لخادمنا كل 5 دقائق
             requests.get(f"http://localhost:{PORT}", timeout=5)
-            print("💓 Keep alive ping sent")
-        except:
-            pass
-        time.sleep(300)
+            print("💓 Keep alive ping sent - preventing sleep")
+        except Exception as e:
+            print(f"⚠️ Keep alive error: {e}")
+        time.sleep(300)  # 5 دقائق
+
+# ==================== AUTO-RESTART (إعادة تشغيل تلقائي) ====================
+def auto_restart_checker():
+    """يتحقق من صحة البوت كل ساعة ويعيد التشغيل إذا لزم الأمر"""
+    last_update = time.time()
+    while True:
+        time.sleep(3600)  # كل ساعة
+        if time.time() - last_update > 7200:  # إذا مر ساعتين بدون تحديثات
+            print("⚠️ No updates for 2 hours, restarting connection...")
+            try:
+                requests.post(f"{API_URL}/deleteWebhook", json={"drop_pending_updates": True})
+                print("✅ Connection reset")
+            except:
+                pass
 
 # ==================== KEYBOARDS ====================
 def channels_kb():
@@ -222,8 +238,12 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 threading.Thread(target=lambda: HTTPServer(('0.0.0.0', PORT), HealthHandler).serve_forever(), daemon=True).start()
 print(f"🌐 Health check server on port {PORT}")
+
+# بدء أنظمة منع النوم
 threading.Thread(target=keep_alive, daemon=True).start()
-print("💓 Keep alive system started")
+print("💓 Keep alive system started - bot will not sleep")
+threading.Thread(target=auto_restart_checker, daemon=True).start()
+print("🔄 Auto-restart checker started")
 
 # ==================== RESET CONNECTION ====================
 print("🔄 Resetting connection...")
@@ -578,6 +598,7 @@ print("🚀 Starting bot...")
 offset = 0
 error_count = 0
 max_errors = 5
+last_update_time = time.time()
 
 while True:
     try:
@@ -591,6 +612,8 @@ while True:
         
         if data.get("ok"):
             for upd in data.get("result", []):
+                last_update_time = time.time()
+                
                 if "message" in upd:
                     msg = upd["message"]
                     chat_id = msg["chat"]["id"]
@@ -647,10 +670,11 @@ while True:
         error_count += 1
         print(f"❌ Error: {e}")
         if error_count >= max_errors:
-            print("🔄 Resetting connection...")
+            print("🔄 Too many errors, resetting connection...")
             try:
                 requests.post(f"{API_URL}/deleteWebhook", json={"drop_pending_updates": True})
                 error_count = 0
+                print("✅ Connection reset")
             except:
                 pass
         time.sleep(5)
