@@ -289,10 +289,10 @@ def handle_start(msg):
     # Welcome message for new users
     channels_text = "\n".join([f"• {ch['name']}" for ch in REQUIRED_CHANNELS])
     welcome_msg = (
-        f"🎉 *Welcome to {BOT_USERNAME}!*\n\n"
+        f"🎉 *Welcome to Real finance airdrop bot!*\n\n"
         f"💰 Welcome Bonus: {format_refi(WELCOME_BONUS)}\n"
         f"👥 Referral Bonus: {format_refi(REFERRAL_BONUS)} per friend\n\n"
-        f"📢 To start, you must join these channels first:\n{channels_text}\n\n"
+        f"📢 To start, you must join these channels first:\@Realfinance_REFI\n@Airdrop_MasterVIP\n@Daily_AirdropX\n\n"
         f"👇 After joining, click the VERIFY button"
     )
     send(chat_id, welcome_msg, channels_kb())
