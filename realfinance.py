@@ -164,7 +164,8 @@ def send(chat_id, text, kb=None):
             "parse_mode": "Markdown",
             "reply_markup": kb
         }, timeout=10)
-    except: pass
+    except Exception as e:
+        print(f"Send error: {e}")
 
 def edit(chat_id, msg_id, text, kb=None):
     try:
@@ -175,23 +176,28 @@ def edit(chat_id, msg_id, text, kb=None):
             "parse_mode": "Markdown",
             "reply_markup": kb
         }, timeout=10)
-    except: pass
+    except Exception as e:
+        print(f"Edit error: {e}")
 
 def answer(cb_id):
     try:
         requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb_id}, timeout=5)
-    except: pass
+    except Exception as e:
+        print(f"Answer error: {e}")
 
 def get_member(chat_id, user_id):
     try:
         r = requests.get(f"{API_URL}/getChatMember", params={"chat_id": chat_id, "user_id": user_id}, timeout=5)
         return r.json().get("result", {}).get("status")
-    except: return None
+    except Exception as e:
+        print(f"Get member error: {e}")
+        return None
 
 def post_to_channel(text):
     try:
         requests.post(f"{API_URL}/sendMessage", json={"chat_id": PAYMENT_CHANNEL, "text": text, "parse_mode": "Markdown"}, timeout=10)
-    except: pass
+    except Exception as e:
+        print(f"Channel post error: {e}")
 
 def broadcast_to_all(message):
     sent, failed = 0, 0
@@ -284,24 +290,36 @@ def handle_verify(cb, user_id, chat_id, msg_id):
         return
     
     u = get_user(user_id)
+    
     if u.get("verified"):
         edit(chat_id, msg_id, f"✅ You're already verified!\n{format_refi(u.get('balance',0))}", main_kb(u))
         return
     
     # Add welcome bonus
-    new_balance = u.get("balance",0) + WELCOME_BONUS
-    update_user(user_id, verified=True, balance=new_balance, total_earned=u.get("total_earned",0)+WELCOME_BONUS)
+    new_balance = u.get("balance", 0) + WELCOME_BONUS
+    update_user(
+        user_id, 
+        verified=True, 
+        balance=new_balance, 
+        total_earned=u.get("total_earned", 0) + WELCOME_BONUS
+    )
     
     # Process referral
     referred_by = u.get("referred_by")
     if referred_by:
         referrer = get_user(int(referred_by))
         if referrer:
-            referrer["balance"] = referrer.get("balance",0) + REFERRAL_BONUS
-            referrer["total_earned"] = referrer.get("total_earned",0) + REFERRAL_BONUS
-            referrer["referrals_count"] = referrer.get("referrals_count",0) + 1
-            update_user(int(referred_by), balance=referrer["balance"], total_earned=referrer["total_earned"], referrals_count=referrer["referrals_count"])
-            send(int(referred_by), f"🎉 *Congratulations!*\nYour friend {u.get('first_name', 'Someone')} joined using your link!\n✨ You earned {format_refi(REFERRAL_BONUS)}")
+            referrer["balance"] = referrer.get("balance", 0) + REFERRAL_BONUS
+            referrer["total_earned"] = referrer.get("total_earned", 0) + REFERRAL_BONUS
+            referrer["referrals_count"] = referrer.get("referrals_count", 0) + 1
+            update_user(
+                int(referred_by), 
+                balance=referrer["balance"], 
+                total_earned=referrer["total_earned"], 
+                referrals_count=referrer["referrals_count"]
+            )
+            send(int(referred_by), 
+                 f"🎉 *Congratulations!*\nYour friend {u.get('first_name', 'Someone')} joined using your link!\n✨ You earned {format_refi(REFERRAL_BONUS)}")
     
     success_msg = (
         f"✅ *Verification Successful!*\n\n"
@@ -310,7 +328,7 @@ def handle_verify(cb, user_id, chat_id, msg_id):
         f"👥 Share your referral link and earn {format_refi(REFERRAL_BONUS)} per friend!"
     )
     edit(chat_id, msg_id, success_msg, main_kb(u))
-    print(f"✅ User {user_id} verified")
+    print(f"✅ User {user_id} verified and received {WELCOME_BONUS} REFi bonus")
 
 def handle_balance(cb, user_id, chat_id, msg_id):
     u = get_user(user_id)
@@ -363,7 +381,6 @@ def handle_withdraw(cb, user_id, chat_id, msg_id):
     
     # Check if user has wallet
     if not u.get("wallet"):
-        # First time withdrawal - ask for wallet
         wallet_msg = (
             f"💸 *Withdrawal Setup*\n\n"
             f"Before you can withdraw, you need to set up your wallet address.\n\n"
