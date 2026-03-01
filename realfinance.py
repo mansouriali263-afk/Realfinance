@@ -30,6 +30,7 @@ WELCOME_BONUS = 1_000_000
 REFERRAL_BONUS = 1_000_000
 MIN_WITHDRAW = 5_000_000
 REFI_PER_MILLION = 2.0
+MAX_PENDING_WITHDRAWALS = 3
 
 # Required channels
 REQUIRED_CHANNELS = [
@@ -55,7 +56,6 @@ def save():
 def get_user(uid):
     uid = str(uid)
     if uid not in db["users"]:
-        chars = string.ascii_uppercase + string.digits
         db["users"][uid] = {
             "id": uid,
             "username": "",
@@ -91,6 +91,13 @@ def get_user_by_username(username):
 def get_pending_withdrawals():
     return [w for w in db["withdrawals"].values() if w.get("status") == "pending"]
 
+def get_user_withdrawals(uid, status=None):
+    uid = str(uid)
+    withdrawals = [w for w in db["withdrawals"].values() if w.get("user_id") == uid]
+    if status:
+        withdrawals = [w for w in withdrawals if w.get("status") == status]
+    return sorted(withdrawals, key=lambda w: w.get("created_at", 0), reverse=True)
+
 def create_withdrawal(uid, amount, wallet):
     rid = f"W{int(time.time())}{uid}{random.randint(1000,9999)}"
     db["withdrawals"][rid] = {
@@ -103,6 +110,20 @@ def create_withdrawal(uid, amount, wallet):
     }
     save()
     return rid
+
+def process_withdrawal(rid, admin_id, status):
+    w = db["withdrawals"].get(rid)
+    if not w or w["status"] != "pending":
+        return False
+    w["status"] = status
+    w["processed_at"] = time.time()
+    w["processed_by"] = admin_id
+    if status == "rejected":
+        user = db["users"].get(w["user_id"])
+        if user:
+            user["balance"] += w["amount"]
+    save()
+    return True
 
 def format_refi(refi):
     usd = (refi / 1_000_000) * REFI_PER_MILLION
@@ -121,8 +142,10 @@ def get_stats():
         "total_users": len(users),
         "verified": sum(1 for u in users if u.get("verified")),
         "total_balance": sum(u.get("balance", 0) for u in users),
+        "total_earned": sum(u.get("total_earned", 0) for u in users),
         "total_withdrawn": db["stats"].get("total_withdrawn", 0),
         "pending_withdrawals": len(get_pending_withdrawals()),
+        "total_referrals": sum(u.get("referrals_count", 0) for u in users),
         "uptime": int(now - db["stats"].get("start_time", now))
     }
 
@@ -142,7 +165,6 @@ def keep_alive():
     while True:
         try:
             requests.get(f"http://localhost:{PORT}", timeout=5)
-            print("💓 Keep alive ping sent")
         except:
             pass
         time.sleep(300)
@@ -194,34 +216,32 @@ def withdrawal_kb(rid):
 # ==================== TELEGRAM ====================
 def send(chat_id, text, kb=None):
     try:
-        r = requests.post(f"{API_URL}/sendMessage", json={
+        requests.post(f"{API_URL}/sendMessage", json={
             "chat_id": chat_id,
             "text": text,
             "parse_mode": "Markdown",
             "reply_markup": kb
         }, timeout=10)
-        print(f"📤 Sent to {chat_id}: {r.status_code}")
     except Exception as e:
         print(f"❌ Send error: {e}")
 
 def edit(chat_id, msg_id, text, kb=None):
     try:
-        r = requests.post(f"{API_URL}/editMessageText", json={
+        requests.post(f"{API_URL}/editMessageText", json={
             "chat_id": chat_id,
             "message_id": msg_id,
             "text": text,
             "parse_mode": "Markdown",
             "reply_markup": kb
         }, timeout=10)
-        print(f"✏️ Edited message {msg_id}: {r.status_code}")
     except Exception as e:
         print(f"❌ Edit error: {e}")
 
 def answer(cb_id):
     try:
         requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb_id}, timeout=5)
-    except Exception as e:
-        print(f"❌ Answer error: {e}")
+    except:
+        pass
 
 def get_member(chat_id, user_id):
     try:
@@ -229,38 +249,28 @@ def get_member(chat_id, user_id):
         if r.status_code == 200:
             data = r.json()
             if data.get("ok"):
-                status = data.get("result", {}).get("status")
-                print(f"🔍 Member status for {user_id} in {chat_id}: {status}")
-                return status
+                return data.get("result", {}).get("status")
         return None
-    except Exception as e:
-        print(f"❌ Get member error: {e}")
+    except:
         return None
 
 def post_to_channel(text):
     try:
         requests.post(f"{API_URL}/sendMessage", json={"chat_id": PAYMENT_CHANNEL, "text": text, "parse_mode": "Markdown"}, timeout=10)
-        print(f"📢 Posted to channel: {PAYMENT_CHANNEL}")
-    except Exception as e:
-        print(f"❌ Channel post error: {e}")
+    except:
+        pass
 
 def broadcast_to_all(message):
     sent = 0
     failed = 0
-    print(f"📢 Broadcasting to {len(db['users'])} users...")
-    
     for uid in db["users"].keys():
         try:
             send(int(uid), message)
             sent += 1
             if sent % 10 == 0:
-                print(f"📢 Sent to {sent} users...")
                 time.sleep(1)
-        except Exception as e:
-            print(f"❌ Failed to send to {uid}: {e}")
+        except:
             failed += 1
-    
-    print(f"✅ Broadcast complete: {sent} sent, {failed} failed")
     return sent, failed
 
 # ==================== WEB SERVER ====================
@@ -268,13 +278,12 @@ class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot is running!")
+        self.wfile.write(b"OK")
     def log_message(self, *args): pass
 
 threading.Thread(target=lambda: HTTPServer(('0.0.0.0', PORT), HealthHandler).serve_forever(), daemon=True).start()
 print(f"🌐 Web server on port {PORT}")
 
-# بدء نظام keep alive
 threading.Thread(target=keep_alive, daemon=True).start()
 print("💓 Keep alive started")
 
@@ -299,7 +308,7 @@ def handle_start(msg):
     print(f"\n▶️ START: User {user_id}")
     print(f"📝 Message: {text}")
     
-    # استخراج البارامتر
+    # استخراج البارامتر (معرف المُحيل)
     parts = text.split()
     ref_param = parts[1] if len(parts) > 1 else None
     
@@ -307,12 +316,11 @@ def handle_start(msg):
     u = get_user(user_id)
     update_user(user_id, username=user.get("username", ""), first_name=user.get("first_name", ""))
     
-    # ✅ معالجة الإحالة (حتى لو المستخدم قديم)
+    # ✅ معالجة الإحالة (تسجل فوراً)
     if ref_param and ref_param.isdigit():
         referrer_id = int(ref_param)
         print(f"🔍 Referral parameter: {referrer_id}")
         
-        # لا تسمح بالإحالة الذاتية وإذا لم يكن للمستخدم مُحيل بالفعل
         if referrer_id != user_id and not u.get("referred_by"):
             print(f"✅ User {user_id} referred by {referrer_id}")
             update_user(user_id, referred_by=referrer_id)
@@ -327,9 +335,8 @@ def handle_start(msg):
                  f"👋 *Someone clicked your referral link!*\n\n"
                  f"They haven't verified yet. Once they verify, you'll get {format_refi(REFERRAL_BONUS)}!")
     
-    # إذا كان المستخدم محققاً مسبقاً
     if u.get("verified"):
-        welcome = f"🎯 *Welcome back!*\n💰 Balance: {format_refi(u.get('balance', 0))}\n👥 Referrals: {u.get('referrals_count', 0)}"
+        welcome = f"🎯 *Welcome back!*\n💰 Balance: {format_refi(u['balance'])}\n👥 Referrals: {u['referrals_count']}"
         send(chat_id, welcome, main_kb(u))
         return
     
@@ -351,6 +358,7 @@ def handle_verify(cb, user_id, chat_id, msg_id):
     not_joined = []
     for ch in REQUIRED_CHANNELS:
         status = get_member(ch["username"], user_id)
+        print(f"Channel {ch['name']}: {status}")
         if status not in ["member", "administrator", "creator"]:
             not_joined.append(ch["name"])
     
@@ -360,16 +368,16 @@ def handle_verify(cb, user_id, chat_id, msg_id):
         return
     
     u = get_user(user_id)
-    print(f"Before verification - Balance: {u.get('balance')}, Verified: {u.get('verified')}")
+    print(f"Before verification - Balance: {u['balance']}, Verified: {u['verified']}")
     
-    if u.get("verified"):
-        edit(chat_id, msg_id, f"✅ You're already verified!\n{format_refi(u.get('balance',0))}", main_kb(u))
+    if u["verified"]:
+        edit(chat_id, msg_id, f"✅ You're already verified!", main_kb(u))
         return
     
     # ✅ إضافة مكافأة الترحيب
-    old_balance = u.get("balance", 0)
+    old_balance = u["balance"]
     new_balance = old_balance + WELCOME_BONUS
-    old_earned = u.get("total_earned", 0)
+    old_earned = u["total_earned"]
     new_earned = old_earned + WELCOME_BONUS
     
     update_user(user_id, 
@@ -381,18 +389,17 @@ def handle_verify(cb, user_id, chat_id, msg_id):
     print(f"Balance: {old_balance} -> {new_balance}")
     
     # ✅ معالجة الإحالة (المُحيل يحصل على مكافأته)
-    referred_by = u.get("referred_by")
+    referred_by = u["referred_by"]
     if referred_by:
         print(f"🔍 Processing referral from {referred_by}")
         referrer = get_user(referred_by)
         
         if referrer:
-            # إضافة مكافأة للمُحيل
-            ref_old_balance = referrer.get("balance", 0)
+            ref_old_balance = referrer["balance"]
             ref_new_balance = ref_old_balance + REFERRAL_BONUS
-            ref_old_earned = referrer.get("total_earned", 0)
+            ref_old_earned = referrer["total_earned"]
             ref_new_earned = ref_old_earned + REFERRAL_BONUS
-            ref_old_count = referrer.get("referrals_count", 0)
+            ref_old_count = referrer["referrals_count"]
             ref_new_count = ref_old_count + 1
             
             update_user(referred_by,
@@ -406,10 +413,11 @@ def handle_verify(cb, user_id, chat_id, msg_id):
             # إشعار المُحيل
             send(referred_by, 
                  f"🎉 *Congratulations!*\n\n"
-                 f"Your friend {u.get('first_name', 'Someone')} just verified!\n"
-                 f"✨ You earned {format_refi(REFERRAL_BONUS)}!")
+                 f"Your friend {u['first_name'] or 'Someone'} just verified!\n"
+                 f"✨ You earned {format_refi(REFERRAL_BONUS)}!\n"
+                 f"💰 New balance: {format_refi(ref_new_balance)}")
     
-    # رسالة النجاح
+    # رسالة النجاح للمستخدم الجديد
     success = (
         f"✅ *Verification Successful!*\n\n"
         f"✨ Added {format_refi(WELCOME_BONUS)}\n"
@@ -421,51 +429,51 @@ def handle_balance(cb, user_id, chat_id, msg_id):
     u = get_user(user_id)
     text = (
         f"💰 *Your Balance*\n\n"
-        f"• Current: {format_refi(u.get('balance', 0))}\n"
-        f"• Total earned: {format_refi(u.get('total_earned', 0))}\n"
-        f"• Total withdrawn: {format_refi(u.get('total_withdrawn', 0))}\n"
-        f"• Referrals: {u.get('referrals_count', 0)}"
+        f"• Current: {format_refi(u['balance'])}\n"
+        f"• Total earned: {format_refi(u['total_earned'])}\n"
+        f"• Total withdrawn: {format_refi(u['total_withdrawn'])}\n"
+        f"• Referrals: {u['referrals_count']}"
     )
     edit(chat_id, msg_id, text, back_kb())
 
 def handle_referral(cb, user_id, chat_id, msg_id):
     u = get_user(user_id)
     link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
-    earned = u.get('referrals_count', 0) * REFERRAL_BONUS
+    earned = u['referrals_count'] * REFERRAL_BONUS
     
     text = (
         f"🔗 *Your Referral Link*\n\n"
         f"`{link}`\n\n"
-        f"• Link clicks: {u.get('referral_clicks', 0)}\n"
-        f"• Successful referrals: {u.get('referrals_count', 0)}\n"
+        f"• Link clicks: {u['referral_clicks']}\n"
+        f"• Successful referrals: {u['referrals_count']}\n"
         f"• Earnings from referrals: {format_refi(earned)}"
     )
     edit(chat_id, msg_id, text, back_kb())
 
 def handle_stats(cb, user_id, chat_id, msg_id):
     u = get_user(user_id)
-    joined = datetime.fromtimestamp(u.get("joined_at", 0)).strftime('%Y-%m-%d')
+    joined = datetime.fromtimestamp(u["joined_at"]).strftime('%Y-%m-%d')
     
     text = (
         f"📊 *Your Statistics*\n\n"
         f"• ID: `{user_id}`\n"
         f"• Joined: {joined}\n"
-        f"• Balance: {format_refi(u.get('balance', 0))}\n"
-        f"• Total earned: {format_refi(u.get('total_earned', 0))}\n"
-        f"• Referrals: {u.get('referrals_count', 0)}\n"
-        f"• Link clicks: {u.get('referral_clicks', 0)}\n"
-        f"• Verified: {'✅' if u.get('verified') else '❌'}"
+        f"• Balance: {format_refi(u['balance'])}\n"
+        f"• Total earned: {format_refi(u['total_earned'])}\n"
+        f"• Referrals: {u['referrals_count']}\n"
+        f"• Link clicks: {u['referral_clicks']}\n"
+        f"• Verified: {'✅' if u['verified'] else '❌'}"
     )
     edit(chat_id, msg_id, text, back_kb())
 
 def handle_withdraw(cb, user_id, chat_id, msg_id):
     u = get_user(user_id)
     
-    if not u.get("verified"):
+    if not u["verified"]:
         edit(chat_id, msg_id, "❌ Please verify first!", back_kb())
         return
     
-    if not u.get("wallet"):
+    if not u["wallet"]:
         wallet_msg = (
             f"💸 *Withdrawal Setup*\n\n"
             f"Please send your Ethereum wallet address:\n"
@@ -478,7 +486,7 @@ def handle_withdraw(cb, user_id, chat_id, msg_id):
         states[user_id] = "waiting_wallet"
         return
     
-    balance = u.get("balance", 0)
+    balance = u["balance"]
     if balance < MIN_WITHDRAW:
         needed = MIN_WITHDRAW - balance
         warning = (
@@ -488,6 +496,12 @@ def handle_withdraw(cb, user_id, chat_id, msg_id):
             f"You need {format_refi(needed)} more"
         )
         edit(chat_id, msg_id, warning, back_kb())
+        return
+    
+    # التحقق من عدد طلبات السحب المعلقة
+    pending = get_user_withdrawals(user_id, "pending")
+    if len(pending) >= MAX_PENDING_WITHDRAWALS:
+        edit(chat_id, msg_id, f"⚠️ You have {len(pending)} pending withdrawals. Max allowed is {MAX_PENDING_WITHDRAWALS}.", back_kb())
         return
     
     amount_msg = (
@@ -502,12 +516,11 @@ def handle_withdraw(cb, user_id, chat_id, msg_id):
 
 def handle_back(cb, user_id, chat_id, msg_id):
     u = get_user(user_id)
-    text = f"🎯 *Main Menu*\n\n💰 Balance: {format_refi(u.get('balance', 0))}"
+    text = f"🎯 *Main Menu*\n\n💰 Balance: {format_refi(u['balance'])}"
     edit(chat_id, msg_id, text, main_kb(u))
     if user_id in states:
         states.pop(user_id, None)
 
-# ==================== ADMIN HANDLERS ====================
 def handle_admin(cb, user_id, chat_id, msg_id):
     if user_id not in ADMIN_IDS:
         answer(cb["id"])
@@ -524,11 +537,11 @@ def handle_admin(cb, user_id, chat_id, msg_id):
     admin_msg = (
         f"👑 *Admin Panel*\n\n"
         f"📊 *Statistics*\n"
-        f"• Users: {stats['total_users']}\n"
-        f"• Verified: {stats['verified']}\n"
+        f"• Users: {stats['total_users']} (✅ {stats['verified']})\n"
         f"• Balance: {format_refi(stats['total_balance'])}\n"
         f"• Withdrawn: {format_refi(stats['total_withdrawn'])}\n"
         f"• Pending withdrawals: {stats['pending_withdrawals']}\n"
+        f"• Total referrals: {stats['total_referrals']}\n"
         f"• Uptime: {hours}h {minutes}m"
     )
     edit(chat_id, msg_id, admin_msg, admin_kb())
@@ -542,11 +555,10 @@ def handle_admin_login_input(txt, user_id, chat_id):
         admin_msg = (
             f"👑 *Admin Panel*\n\n"
             f"📊 *Statistics*\n"
-            f"• Users: {stats['total_users']}\n"
-            f"• Verified: {stats['verified']}\n"
+            f"• Users: {stats['total_users']} (✅ {stats['verified']})\n"
             f"• Balance: {format_refi(stats['total_balance'])}\n"
             f"• Withdrawn: {format_refi(stats['total_withdrawn'])}\n"
-            f"• Pending withdrawals: {stats['pending_withdrawals']}\n"
+            f"• Pending: {stats['pending_withdrawals']}\n"
             f"• Uptime: {hours}h {minutes}m"
         )
         send(chat_id, admin_msg, admin_kb())
@@ -565,8 +577,10 @@ def handle_admin_stats(cb, chat_id, msg_id):
         f"• Verified: {stats['verified']}\n\n"
         f"💰 *Balances*\n"
         f"• Total balance: {format_refi(stats['total_balance'])}\n"
+        f"• Total earned: {format_refi(stats['total_earned'])}\n"
         f"• Total withdrawn: {format_refi(stats['total_withdrawn'])}\n\n"
-        f"⏳ *Pending Withdrawals: {stats['pending_withdrawals']}*\n\n"
+        f"⏳ *Pending Withdrawals: {stats['pending_withdrawals']}*\n"
+        f"👥 *Total Referrals: {stats['total_referrals']}*\n\n"
         f"⏱️ *Uptime: {hours}h {minutes}m*"
     )
     edit(chat_id, msg_id, stats_msg, admin_kb())
@@ -584,7 +598,8 @@ def handle_admin_pending(cb, chat_id, msg_id):
     for w in pending[:5]:
         user = get_user(int(w["user_id"]))
         name = user.get("first_name", "Unknown")
-        text += f"🆔 `{w['id'][:8]}`\n👤 {name}\n💰 {format_refi(w['amount'])}\n📅 {datetime.fromtimestamp(w['created_at']).strftime('%Y-%m-%d %H:%M')}\n\n"
+        username = f"@{user.get('username', '')}" if user.get('username') else ""
+        text += f"🆔 `{w['id'][:8]}`\n👤 {name} {username}\n💰 {format_refi(w['amount'])}\n📅 {datetime.fromtimestamp(w['created_at']).strftime('%Y-%m-%d %H:%M')}\n\n"
         kb["inline_keyboard"].append([{"text": f"Process {w['id'][:8]}", "callback_data": f"process_{w['id']}"}])
     
     if len(pending) > 5:
@@ -603,34 +618,26 @@ def handle_process(cb, chat_id, msg_id, rid):
     text = (
         f"💰 *Withdrawal Details*\n\n"
         f"📝 Request: `{rid}`\n"
-        f"👤 User: {user.get('first_name', 'Unknown')}\n"
+        f"👤 User: {user.get('first_name', 'Unknown')} (@{user.get('username', '')})\n"
         f"💰 Amount: {format_refi(w['amount'])}\n"
-        f"📮 Wallet: {w['wallet']}\n"
+        f"📮 Wallet: `{w['wallet']}`\n"
         f"📅 Created: {datetime.fromtimestamp(w['created_at']).strftime('%Y-%m-%d %H:%M')}"
     )
     edit(chat_id, msg_id, text, withdrawal_kb(rid))
 
 def handle_approve(cb, admin_id, chat_id, msg_id, rid):
-    w = db["withdrawals"].get(rid)
-    if w and w["status"] == "pending":
-        w["status"] = "approved"
-        w["processed_at"] = time.time()
-        w["processed_by"] = admin_id
-        save()
-        send(int(w["user_id"]), f"✅ *Withdrawal Approved!*\n\nAmount: {format_refi(w['amount'])}")
+    if process_withdrawal(rid, admin_id, "approved"):
+        w = db["withdrawals"].get(rid)
+        if w:
+            send(int(w["user_id"]), f"✅ *Withdrawal Approved!*\n\nAmount: {format_refi(w['amount'])}")
     handle_admin_pending(cb, chat_id, msg_id)
 
 def handle_reject(cb, admin_id, chat_id, msg_id, rid):
-    w = db["withdrawals"].get(rid)
-    if w and w["status"] == "pending":
-        w["status"] = "rejected"
-        w["processed_at"] = time.time()
-        w["processed_by"] = admin_id
-        user = get_user(int(w["user_id"]))
-        if user:
-            user["balance"] += w["amount"]
-        save()
-        send(int(w["user_id"]), f"❌ *Withdrawal Rejected*\n\nAmount returned: {format_refi(w['amount'])}")
+    if process_withdrawal(rid, admin_id, "rejected"):
+        w = db["withdrawals"].get(rid)
+        if w:
+            user = get_user(int(w["user_id"]))
+            send(int(w["user_id"]), f"❌ *Withdrawal Rejected*\n\nAmount returned: {format_refi(w['amount'])}")
     handle_admin_pending(cb, chat_id, msg_id)
 
 def handle_admin_broadcast(cb, chat_id, msg_id):
@@ -651,14 +658,15 @@ def handle_admin_users(cb, chat_id, msg_id):
         username = f"@{u.get('username', '')}" if u.get('username') else "No username"
         verified = "✅" if u.get("verified") else "❌"
         joined = datetime.fromtimestamp(u.get("joined_at", 0)).strftime('%Y-%m-%d')
-        text += f"{verified} {name} {username} - {joined}\n"
+        balance = format_refi(u.get("balance", 0))
+        text += f"{verified} {name} {username}\n📅 {joined} | 💰 {balance}\n\n"
     text += f"\nTotal users: {len(db['users'])}"
     edit(chat_id, msg_id, text, admin_kb())
 
 def handle_admin_logout(cb, user_id, chat_id, msg_id):
     admin_logout(user_id)
     u = get_user(user_id)
-    send(chat_id, f"🔒 Logged out\n\n💰 Balance: {format_refi(u.get('balance',0))}", main_kb(u))
+    send(chat_id, f"🔒 Logged out\n\n💰 Balance: {format_refi(u['balance'])}", main_kb(u))
 
 # ==================== INPUT HANDLERS ====================
 def handle_wallet_input(txt, user_id, chat_id):
@@ -688,24 +696,26 @@ def handle_amount_input(txt, user_id, chat_id):
         send(chat_id, f"❌ Min is {format_refi(MIN_WITHDRAW)}")
         return
     
-    if amount > u.get("balance", 0):
+    if amount > u["balance"]:
         send(chat_id, f"❌ Insufficient balance")
         return
     
-    # Process withdrawal
-    new_balance = u["balance"] - amount
-    new_withdrawn = u.get("total_withdrawn", 0) + amount
-    update_user(user_id, balance=new_balance, total_withdrawn=new_withdrawn)
-    db["stats"]["total_withdrawn"] = db["stats"].get("total_withdrawn", 0) + amount
-    
+    # إنشاء طلب سحب
     rid = create_withdrawal(user_id, amount, u["wallet"])
     
-    # Post to channel
+    # خصم الرصيد
+    new_balance = u["balance"] - amount
+    new_withdrawn = u["total_withdrawn"] + amount
+    update_user(user_id, balance=new_balance, total_withdrawn=new_withdrawn)
+    db["stats"]["total_withdrawn"] += amount
+    save()
+    
+    # نشر في قناة المدفوعات
     channel_msg = (
         f"💰 *New Withdrawal Request*\n\n"
         f"👤 User: {u.get('first_name', 'Unknown')} (@{u.get('username', 'None')})\n"
         f"🆔 ID: `{user_id}`\n"
-        f"📊 Referrals: {u.get('referrals_count', 0)}\n"
+        f"📊 Referrals: {u['referrals_count']}\n"
         f"💵 Amount: {format_refi(amount)}\n"
         f"📮 Wallet: `{u['wallet']}`\n"
         f"🆔 Request ID: `{rid}`"
