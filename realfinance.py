@@ -54,7 +54,6 @@ def save():
 def get_user(uid):
     uid = str(uid)
     if uid not in db["users"]:
-        chars = string.ascii_uppercase + string.digits
         db["users"][uid] = {
             "id": uid,
             "username": "",
@@ -63,7 +62,6 @@ def get_user(uid):
             "balance": 0,
             "total_earned": 0,
             "total_withdrawn": 0,
-            "referral_code": ''.join(random.choices(chars, k=8)),
             "referred_by": None,
             "referrals_count": 0,
             "referral_clicks": 0,
@@ -78,12 +76,6 @@ def update_user(uid, **kwargs):
     if uid in db["users"]:
         db["users"][uid].update(kwargs)
         save()
-
-def get_user_by_code(code):
-    for u in db["users"].values():
-        if u.get("referral_code") == code:
-            return u
-    return None
 
 def get_user_by_username(username):
     username = username.lower().lstrip('@')
@@ -246,17 +238,26 @@ def handle_start(msg):
     
     print(f"▶️ Start: {user_id}")
     
-    # Check for referral
+    # Check for referral using User ID
     args = text.split()
     if len(args) > 1:
-        ref_code = args[1]
-        referrer = get_user_by_code(ref_code)
-        if referrer and referrer["id"] != str(user_id):
-            u = get_user(user_id)
-            if not u.get("referred_by"):
-                update_user(user_id, referred_by=referrer["id"])
-                referrer["referral_clicks"] = referrer.get("referral_clicks", 0) + 1
-                update_user(int(referrer["id"]), referral_clicks=referrer["referral_clicks"])
+        try:
+            referrer_id = int(args[1])
+            print(f"🔍 Referrer ID from start param: {referrer_id}")
+            
+            # Don't allow self-referral
+            if referrer_id != user_id:
+                referrer = get_user(referrer_id)
+                u = get_user(user_id)
+                
+                # Only set referred_by if not already set
+                if not u.get("referred_by"):
+                    update_user(user_id, referred_by=referrer_id)
+                    referrer["referral_clicks"] = referrer.get("referral_clicks", 0) + 1
+                    update_user(referrer_id, referral_clicks=referrer["referral_clicks"])
+                    print(f"✅ User {user_id} referred by {referrer_id}")
+        except ValueError:
+            print(f"⚠️ Invalid referral ID: {args[1]}")
     
     u = get_user(user_id)
     update_user(user_id, username=user.get("username", ""), first_name=user.get("first_name", ""))
@@ -295,7 +296,6 @@ def handle_verify(cb, user_id, chat_id, msg_id):
         return
     
     u = get_user(user_id)
-    print(f"🔍 Before verification - User data: {u}")
     
     if u.get("verified"):
         edit(chat_id, msg_id, f"✅ You're already verified!\n{format_refi(u.get('balance',0))}", main_kb(u))
@@ -309,11 +309,6 @@ def handle_verify(cb, user_id, chat_id, msg_id):
         balance=new_balance, 
         total_earned=u.get("total_earned", 0) + WELCOME_BONUS
     )
-    
-    # 🔍 تأكد من الحفظ
-    updated_u = get_user(user_id)
-    print(f"🔍 After verification - User data: {updated_u}")
-    print(f"✅ Verified should be True: {updated_u.get('verified')}")
     
     # Process referral
     referred_by = u.get("referred_by")
@@ -354,7 +349,7 @@ def handle_balance(cb, user_id, chat_id, msg_id):
 
 def handle_referral(cb, user_id, chat_id, msg_id):
     u = get_user(user_id)
-    link = f"https://t.me/{BOT_USERNAME}?start={u.get('referral_code','')}"
+    link = f"https://t.me/{BOT_USERNAME}?start={user_id}"  # Using user_id as referral code
     earned = u.get('referrals_count', 0) * REFERRAL_BONUS
     
     msg = (
@@ -390,7 +385,7 @@ def handle_withdraw(cb, user_id, chat_id, msg_id):
     print(f"🔍 User balance: {u.get('balance', 0)}")
     print(f"🔍 User wallet: {u.get('wallet')}")
     
-    # التحقق من وجود محفظة أولاً
+    # Check if user has wallet
     if not u.get("wallet"):
         wallet_msg = (
             f"💸 *Withdrawal Setup*\n\n"
@@ -405,7 +400,7 @@ def handle_withdraw(cb, user_id, chat_id, msg_id):
         states[user_id] = "waiting_wallet"
         return
     
-    # ✅ التحقق من الرصيد فقط (بدون التحقق من القنوات مرة أخرى)
+    # Check balance
     balance = u.get("balance", 0)
     
     if balance < MIN_WITHDRAW:
@@ -420,7 +415,7 @@ def handle_withdraw(cb, user_id, chat_id, msg_id):
         edit(chat_id, msg_id, warning_msg, back_kb())
         return
     
-    # ✅ الرصيد كافي، نطلب المبلغ
+    # Ask for amount
     amount_msg = (
         f"💸 *Withdrawal Request*\n\n"
         f"Your balance: {format_refi(balance)}\n"
