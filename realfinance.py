@@ -7,11 +7,8 @@ import sys
 import random
 import string
 import threading
-import hmac
-import hashlib
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import parse_qs
 
 print = lambda x: (sys.stdout.write(x + "\n"), sys.stdout.flush())[0]
 
@@ -20,16 +17,14 @@ BOT_TOKEN = "8720874613:AAFy_qzSTZVR_h8U6oUaFUr-pMy1xAKAXxc"
 BOT_USERNAME = "Realfinancepaybot"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 PORT = int(os.environ.get('PORT', 10000))
-WEBHOOK_URL = os.environ.get('WEBHOOK_URL', f"https://your-service-name.onrender.com/webhook")
 
-ADMIN_IDS = [1653918641]
-ADMIN_PASSWORD = "Ali97$"
+# قناة نشر طلبات السحب
+PAYMENT_CHANNEL = "@beefy_payment"  # أو معرف القناة الرقمي
 
 WELCOME_BONUS = 1_000_000
 REFERRAL_BONUS = 1_000_000
 MIN_WITHDRAW = 5_000_000
 REFI_PER_MILLION = 2.0
-MAX_PENDING_WITHDRAWALS = 3
 
 REQUIRED_CHANNELS = [
     {"name": "REFi Distribution", "username": "@Realfinance_REFI", "link": "https://t.me/Realfinance_REFI"},
@@ -38,7 +33,7 @@ REQUIRED_CHANNELS = [
 ]
 
 # ==================== DATABASE ====================
-db = {"users": {}, "withdrawals": {}, "admin_sessions": {}, "stats": {"start_time": time.time()}}
+db = {"users": {}, "stats": {"start_time": time.time()}}
 
 try:
     with open("bot_data.json", "r") as f:
@@ -61,7 +56,7 @@ def get_user(uid):
             "referral_code": ''.join(random.choices(chars, k=8)),
             "referred_by": None, "referrals_count": 0, "referrals": {},
             "referral_clicks": 0, "verified": False,
-            "wallet": None, "is_admin": int(uid) in ADMIN_IDS, "is_banned": False
+            "wallet": None,
         }
         save()
     return db["users"][uid]
@@ -88,54 +83,6 @@ def short_wallet(w):
 def is_valid_wallet(w):
     return w and w.startswith('0x') and len(w) == 42
 
-def get_pending_withdrawals():
-    return [w for w in db["withdrawals"].values() if w.get("status") == "pending"]
-
-def create_withdrawal(uid, amount, wallet):
-    rid = f"W{int(time.time())}{uid}{random.randint(1000,9999)}"
-    db["withdrawals"][rid] = {
-        "id": rid, "user_id": str(uid), "amount": amount,
-        "wallet": wallet, "status": "pending", "created_at": time.time()
-    }
-    save()
-    return rid
-
-def process_withdrawal(rid, admin_id, status):
-    w = db["withdrawals"].get(rid)
-    if not w or w["status"] != "pending":
-        return False
-    w["status"] = status
-    w["processed_at"] = time.time()
-    w["processed_by"] = admin_id
-    if status == "rejected":
-        user = db["users"].get(w["user_id"])
-        if user:
-            user["balance"] += w["amount"]
-    save()
-    return True
-
-def is_admin_logged_in(admin_id):
-    return db["admin_sessions"].get(str(admin_id), 0) > time.time()
-
-def admin_login(admin_id):
-    db["admin_sessions"][str(admin_id)] = time.time() + 3600
-    save()
-
-def admin_logout(admin_id):
-    db["admin_sessions"].pop(str(admin_id), None)
-    save()
-
-def get_stats():
-    users = db["users"].values()
-    now = time.time()
-    return {
-        "total_users": len(users),
-        "verified": sum(1 for u in users if u.get("verified")),
-        "pending": len(get_pending_withdrawals()),
-        "balance": sum(u.get("balance", 0) for u in users),
-        "uptime": int(now - db["stats"].get("start_time", now))
-    }
-
 # ==================== KEYBOARDS ====================
 def channels_kb():
     kb = []
@@ -159,19 +106,10 @@ def main_kb(user):
             [{"text": "📊 Stats", "callback_data": "stats"},
              {"text": "👛 Wallet", "callback_data": "wallet"}]
         ]
-    if user.get("is_admin"):
-        kb.append([{"text": "👑 Admin", "callback_data": "admin"}])
     return {"inline_keyboard": kb}
 
 def back_kb():
     return {"inline_keyboard": [[{"text": "🔙 Back", "callback_data": "back"}]]}
-
-def admin_kb():
-    return {"inline_keyboard": [
-        [{"text": "📊 Stats", "callback_data": "astats"}],
-        [{"text": "💰 Pending", "callback_data": "apending"}],
-        [{"text": "🔒 Logout", "callback_data": "alogout"}]
-    ]}
 
 # ==================== TELEGRAM ====================
 def send(chat_id, text, kb=None):
@@ -211,22 +149,29 @@ def get_member(chat_id, user_id):
         return r.json().get("result", {}).get("status")
     except: return None
 
-def set_webhook():
+def post_to_channel(text):
+    """نشر رسالة في قناة المدفوعات"""
     try:
-        r = requests.post(f"{API_URL}/setWebhook", json={
-            "url": f"{WEBHOOK_URL}/webhook",
-            "allowed_updates": ["message", "callback_query"]
+        requests.post(f"{API_URL}/sendMessage", json={
+            "chat_id": PAYMENT_CHANNEL,
+            "text": text,
+            "parse_mode": "Markdown"
         }, timeout=10)
-        print(f"Webhook set: {r.json()}")
-        return r.json().get("ok", False)
+        return True
     except Exception as e:
-        print(f"Webhook error: {e}")
+        print(f"❌ Channel post error: {e}")
         return False
 
-def delete_webhook():
-    try:
-        requests.post(f"{API_URL}/deleteWebhook", timeout=10)
-    except: pass
+# ==================== WEB SERVER ====================
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, *args): pass
+
+threading.Thread(target=lambda: HTTPServer(('0.0.0.0', PORT), HealthHandler).serve_forever(), daemon=True).start()
+print(f"🌐 Web on {PORT}")
 
 # ==================== HANDLERS ====================
 states = {}
@@ -239,6 +184,7 @@ def handle_start(msg):
     
     print(f"▶️ Start: {uid}")
     
+    # Check referral
     args = text.split()
     if len(args) > 1:
         ref = args[1]
@@ -282,6 +228,7 @@ def handle_verify(cb, uid, cid, mid):
     update_user(uid, verified=True, verified_at=time.time(), balance=new_bal,
                 total_earned=u.get("total_earned",0)+WELCOME_BONUS)
     
+    # Process referral
     ref_by = u.get("referred_by")
     if ref_by:
         ref = get_user(int(ref_by))
@@ -331,10 +278,7 @@ def handle_wd(cb, uid, cid, mid):
             f"⚠️ *Insufficient Balance*\nMin: {format_refi(MIN_WITHDRAW)}\nYour: {format_refi(bal)}",
             back_kb())
         return
-    pending = [w for w in db["withdrawals"].values() if w.get("status") == "pending" and w.get("user_id") == str(uid)]
-    if len(pending) >= MAX_PENDING_WITHDRAWALS:
-        edit(cid, mid, f"⚠️ You have {len(pending)} pending withdrawals", back_kb())
-        return
+    
     edit(cid, mid,
         f"💸 *Withdraw*\nBalance: {format_refi(bal)}\nMin: {format_refi(MIN_WITHDRAW)}\nWallet: {short_wallet(u['wallet'])}\n\nSend amount:")
     states[uid] = "wd"
@@ -351,60 +295,13 @@ def handle_back(cb, uid, cid, mid):
     u = get_user(uid)
     edit(cid, mid, f"🎯 *Menu*\n💰 {format_refi(u.get('balance',0))}", main_kb(u))
 
-def handle_admin(cb, uid, cid, mid):
-    if uid not in ADMIN_IDS:
-        return
-    s = get_stats()
-    edit(cid, mid,
-        f"👑 *Admin*\nUsers: {s['total_users']} (✅ {s['verified']})\nPending: {s['pending']}\nBalance: {format_refi(s['balance'])}",
-        admin_kb())
-
-def handle_admin_login(msg):
-    cid = msg["chat"]["id"]
-    uid = msg["from"]["id"]
-    if uid not in ADMIN_IDS:
-        send(cid, "⛔ Unauthorized")
-        return
-    send(cid, "🔐 Enter password:")
-    states[uid] = "admin_login"
-
-def handle_admin_login_input(txt, uid, cid):
-    if txt == ADMIN_PASSWORD:
-        admin_login(uid)
-        s = get_stats()
-        send(cid, f"✅ Login!\n👑 *Admin*\nUsers: {s['total_users']}", admin_kb())
-    else:
-        send(cid, "❌ Wrong password!")
-
-def handle_admin_stats(cb, cid, mid):
-    s = get_stats()
-    edit(cid, mid,
-        f"📊 *Stats*\nUsers: {s['total_users']}\nVerified: {s['verified']}\nPending: {s['pending']}\nBalance: {format_refi(s['balance'])}",
-        admin_kb())
-
-def handle_admin_pending(cb, cid, mid):
-    pending = get_pending_withdrawals()
-    if not pending:
-        edit(cid, mid, "✅ No pending withdrawals", admin_kb())
-        return
-    txt = "💰 *Pending Withdrawals*\n\n"
-    kb = {"inline_keyboard": []}
-    for w in pending[:5]:
-        txt += f"🆔 {w['id'][:8]}\n💰 {format_refi(w['amount'])}\n\n"
-        kb["inline_keyboard"].append([{"text": f"Approve {w['id'][:8]}", "callback_data": f"app_{w['id']}"}])
-    kb["inline_keyboard"].append([{"text": "🔙 Back", "callback_data": "admin"}])
-    edit(cid, mid, txt, kb)
-
-def handle_approve(cb, aid, cid, mid, rid):
-    if process_withdrawal(rid, aid, "approved"):
-        send(cid, "✅ Approved")
-    handle_admin_pending(cb, cid, mid)
-
+# ==================== INPUT HANDLERS ====================
 def handle_wallet_input(txt, uid, cid):
     if is_valid_wallet(txt):
         update_user(uid, wallet=txt)
         u = get_user(uid)
         send(cid, f"✅ *Wallet saved!*\n{short_wallet(txt)}", main_kb(u))
+        print(f"👛 Wallet set for {uid}")
     else:
         send(cid, "❌ Invalid wallet! Must be 0x + 40 chars")
 
@@ -420,114 +317,78 @@ def handle_withdraw_input(txt, uid, cid):
     elif amt > u.get("balance",0):
         send(cid, f"❌ Insufficient balance")
     else:
-        rid = create_withdrawal(uid, amt, u["wallet"])
-        update_user(uid, balance=u["balance"] - amt)
-        send(cid, f"✅ *Requested!*\nID: {rid[:8]}", main_kb(u))
-
-# ==================== WEB SERVER ====================
-class BotHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == '/':
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain')
-            self.end_headers()
-            self.wfile.write(b"Bot is running!")
-        elif self.path == '/health':
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({"status": "ok", "users": len(db["users"])}).encode())
-        else:
-            self.send_response(404)
-            self.end_headers()
-    
-    def do_POST(self):
-        if self.path == '/webhook':
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length)
-            
-            try:
-                update = json.loads(post_data.decode('utf-8'))
-                self.process_update(update)
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(b'{"ok": true}')
-            except Exception as e:
-                print(f"Error processing update: {e}")
-                self.send_response(500)
-                self.end_headers()
-        else:
-            self.send_response(404)
-            self.end_headers()
-    
-    def process_update(self, update):
-        if "message" in update:
-            msg = update["message"]
-            cid = msg["chat"]["id"]
-            uid = msg["from"]["id"]
-            txt = msg.get("text", "")
-            
-            if txt == "/start":
-                handle_start(msg)
-            elif txt == "/admin":
-                handle_admin_login(msg)
-            else:
-                state = states.get(uid)
-                if state == "wallet":
-                    handle_wallet_input(txt, uid, cid)
-                    states.pop(uid, None)
-                elif state == "wd":
-                    handle_withdraw_input(txt, uid, cid)
-                    states.pop(uid, None)
-                elif state == "admin_login":
-                    handle_admin_login_input(txt, uid, cid)
-                    states.pop(uid, None)
+        # خصم الرصيد
+        update_user(uid, balance=u["balance"] - amt, total_withdrawn=u.get("total_withdrawn",0)+amt)
         
-        elif "callback_query" in update:
-            cb = update["callback_query"]
-            d = cb.get("data", "")
-            uid = cb["from"]["id"]
-            cid = cb["message"]["chat"]["id"]
-            mid = cb["message"]["message_id"]
-            
-            answer(cb["id"])
-            
-            if d == "verify": handle_verify(cb, uid, cid, mid)
-            elif d == "bal": handle_bal(cb, uid, cid, mid)
-            elif d == "ref": handle_ref(cb, uid, cid, mid)
-            elif d == "stats": handle_stats(cb, uid, cid, mid)
-            elif d == "wd": handle_wd(cb, uid, cid, mid)
-            elif d == "wallet": handle_wallet(cb, uid, cid, mid)
-            elif d == "back": handle_back(cb, uid, cid, mid)
-            elif d == "admin": handle_admin(cb, uid, cid, mid)
-            elif d == "astats": handle_admin_stats(cb, cid, mid)
-            elif d == "apending": handle_admin_pending(cb, cid, mid)
-            elif d.startswith("app_"): handle_approve(cb, uid, cid, mid, d[4:])
-    
-    def log_message(self, format, *args):
-        print(f"[{datetime.now()}] {format % args}")
+        # تحضير نص النشر في القناة
+        channel_msg = (
+            f"💰 *طلب سحب جديد*\n\n"
+            f"👤 *المستخدم:* {u.get('first_name', 'Unknown')}\n"
+            f"📱 *اليوزر:* @{u.get('username', 'None')}\n"
+            f"🆔 *المعرف:* `{uid}`\n"
+            f"📊 *الإحالات:* {u.get('referrals_count', 0)}\n"
+            f"💵 *المبلغ:* {format_refi(amt)}\n"
+            f"📮 *المحفظة:* `{u['wallet']}`\n"
+            f"⏱️ *الوقت:* {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        )
+        
+        # نشر في القناة
+        post_to_channel(channel_msg)
+        
+        # إشعار المستخدم
+        send(cid, f"✅ *Withdrawal request sent!*\nID: `W{int(time.time())}`", main_kb(u))
+        print(f"💰 Withdrawal: {uid} requested {amt} REFi")
 
-# ==================== MAIN ====================
-if __name__ == "__main__":
-    print("🚀 Starting bot...")
-    
-    # Set webhook on startup
-    delete_webhook()
-    time.sleep(1)
-    if set_webhook():
-        print("✅ Webhook configured successfully")
-    else:
-        print("⚠️ Failed to set webhook, but continuing...")
-    
-    # Start server
-    server = HTTPServer(('0.0.0.0', PORT), BotHandler)
-    print(f"🌐 Server running on port {PORT}")
-    print(f"🔗 Webhook URL: {WEBHOOK_URL}/webhook")
-    
+# ==================== MAIN LOOP ====================
+print("🚀 Starting bot...")
+offset = 0
+
+while True:
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\n🛑 Shutting down...")
-        delete_webhook()
-        server.shutdown()
+        r = requests.post(f"{API_URL}/getUpdates", json={
+            "offset": offset,
+            "timeout": 30,
+            "allowed_updates": ["message", "callback_query"]
+        }, timeout=35)
+        data = r.json()
+        
+        if data.get("ok"):
+            for upd in data.get("result", []):
+                if "message" in upd:
+                    msg = upd["message"]
+                    cid = msg["chat"]["id"]
+                    uid = msg["from"]["id"]
+                    txt = msg.get("text", "")
+                    
+                    if txt == "/start":
+                        handle_start(msg)
+                    else:
+                        state = states.get(uid)
+                        if state == "wallet":
+                            handle_wallet_input(txt, uid, cid)
+                            states.pop(uid, None)
+                        elif state == "wd":
+                            handle_withdraw_input(txt, uid, cid)
+                            states.pop(uid, None)
+                
+                elif "callback_query" in upd:
+                    cb = upd["callback_query"]
+                    d = cb.get("data", "")
+                    uid = cb["from"]["id"]
+                    cid = cb["message"]["chat"]["id"]
+                    mid = cb["message"]["message_id"]
+                    
+                    answer(cb["id"])
+                    
+                    if d == "verify": handle_verify(cb, uid, cid, mid)
+                    elif d == "bal": handle_bal(cb, uid, cid, mid)
+                    elif d == "ref": handle_ref(cb, uid, cid, mid)
+                    elif d == "stats": handle_stats(cb, uid, cid, mid)
+                    elif d == "wd": handle_wd(cb, uid, cid, mid)
+                    elif d == "wallet": handle_wallet(cb, uid, cid, mid)
+                    elif d == "back": handle_back(cb, uid, cid, mid)
+                
+                offset = upd["update_id"] + 1
+    except Exception as e:
+        print(f"❌ {e}")
+        time.sleep(5)
