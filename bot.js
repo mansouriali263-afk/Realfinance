@@ -31,7 +31,7 @@ bot.getMe().then(me => {
 const WELCOME_BONUS = 1_000_000;
 const REFERRAL_BONUS = 1_000_000;
 const MIN_WITHDRAW = 5_000_000;
-const ADMIN_IDS = [1653918641];
+const ADMIN_IDS = [1653918641]; // Only this ID can access admin panel
 const ADMIN_PASSWORD = 'Ali97$';
 const PAYMENT_CHANNEL = '@beefy_payment';
 
@@ -157,12 +157,17 @@ function processWithdrawal(rid, adminId, status) {
 
 // ==================== ADMIN SESSION ====================
 function isAdminLoggedIn(adminId) { 
+    // Only allow if adminId is in ADMIN_IDS and has valid session
+    if (!ADMIN_IDS.includes(Number(adminId))) return false;
     return db.admin_sessions[String(adminId)] > Date.now() / 1000; 
 }
 
 function adminLogin(adminId) { 
+    // Only allow if adminId is in ADMIN_IDS
+    if (!ADMIN_IDS.includes(Number(adminId))) return false;
     db.admin_sessions[String(adminId)] = Date.now() / 1000 + 3600; 
     saveDB(); 
+    return true;
 }
 
 function adminLogout(adminId) { 
@@ -237,17 +242,21 @@ function channelsKeyboard() {
 }
 
 function bottomReplyKeyboard(userId) {
-    // Bottom fixed buttons (تظهر بعد التحقق) - بدون Twitter
+    // Bottom fixed buttons (تظهر بعد التحقق)
     const user = db.users[String(userId)] || {};
     
     // First row - 3 main buttons
     const row1 = ['💰 Balance', '🔗 Referral', '📊 Stats'];
     
-    // Second row - wallet and withdraw
-    const row2 = ['👛 Wallet'];
-    if (user.wallet) {
-        row2.push('💸 Withdraw');
-    }
+    // Second row - wallet and withdraw (دائماً جنب بعض)
+    const row2 = [];
+    
+    // زر المحفظة (يظهر دائماً)
+    row2.push('👛 Wallet');
+    
+    // زر السحب (يظهر دائماً بجانب المحفظة، حتى لو ما في محفظة)
+    // إذا ما في محفظة، السحب بيطلب المحفظة أولاً
+    row2.push('💸 Withdraw');
     
     const keyboard = [row1, row2];
     
@@ -344,17 +353,65 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     // Always show welcome message with channels + Twitter first
     const channelsText = REQUIRED_CHANNELS.map(ch => `• ${ch.name}`).join('\n');
     await bot.sendMessage(chatId, 
-        `🎉 *Welcome to Real finance airdrop bot!*\n\n` +
+        `🎉 *Welcome to Realfinancepaybot!*\n\n` +
         `💰 *Welcome Bonus:* ${formatRefi(WELCOME_BONUS)}\n` +
         `👥 *Referral Bonus:* ${formatRefi(REFERRAL_BONUS)} per friend\n\n` +
         `📢 *To start, you must join these channels first:*\n${channelsText}\n\n` +
-        `🐦 *Follow Advertiser on X for updates*\n\n` +
+        `🐦 *Optional:* Follow on X for updates\n\n` +
         `👇 After joining, click the VERIFY button`,
         { 
             parse_mode: 'Markdown', 
             reply_markup: channelsKeyboard() // Twitter يظهر هنا فقط
         }
     );
+});
+
+// ==================== ADMIN COMMAND HANDLER ====================
+bot.onText(/\/admin/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    
+    console.log(`\n🔐 ADMIN: User ${userId} tried to access admin panel`);
+    
+    // Check if user is in ADMIN_IDS
+    if (!ADMIN_IDS.includes(Number(userId))) {
+        await bot.sendMessage(chatId,
+            `⛔ *Unauthorized Access*\n\nYou are not authorized to use this command.`,
+            { parse_mode: 'Markdown' }
+        );
+        console.log(`❌ Unauthorized admin access attempt by ${userId}`);
+        return;
+    }
+    
+    // Check if already logged in
+    if (isAdminLoggedIn(userId)) {
+        const stats = getStats();
+        const hours = Math.floor(stats.uptime / 3600);
+        const minutes = Math.floor((stats.uptime % 3600) / 60);
+        
+        await bot.sendMessage(chatId,
+            `👑 *Admin Panel*\n\n` +
+            `📊 *Statistics*\n` +
+            `• Users: ${stats.total_users} (✅ ${stats.verified})\n` +
+            `• Twitter followers: ${stats.twitter_followers}\n` +
+            `• Balance: ${formatRefi(stats.total_balance)}\n` +
+            `• Withdrawn: ${formatRefi(stats.total_withdrawn)}\n` +
+            `• Pending withdrawals: ${stats.pending_withdrawals}\n` +
+            `• Total referrals: ${stats.total_referrals}\n` +
+            `• Uptime: ${hours}h ${minutes}m`,
+            { parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
+        );
+        return;
+    }
+    
+    // Ask for password
+    await bot.sendMessage(chatId,
+        "🔐 *Admin Login*\n\nPlease enter the admin password:",
+        { parse_mode: 'Markdown', ...removeKeyboard() }
+    );
+    
+    // Set pending state for admin login
+    updateUser(userId, { pending_state: 'admin_login' });
 });
 
 // ==================== CALLBACK QUERY HANDLER ====================
@@ -440,7 +497,10 @@ bot.on('callback_query', async (query) => {
 
 // ==================== MESSAGE HANDLER ====================
 bot.on('message', async (msg) => {
-    if (msg.text?.startsWith('/')) return;
+    if (msg.text?.startsWith('/')) {
+        // Already handled by command handlers
+        return;
+    }
     if (msg.text === '✅ VERIFY MEMBERSHIP') return;
     
     const chatId = msg.chat.id;
@@ -523,11 +583,13 @@ bot.on('message', async (msg) => {
             return;
         }
         
+        // إذا ما في محفظة، اطلبها أولاً
         if (!user.wallet) {
             await bot.sendMessage(chatId,
-                "⚠️ *Please set a wallet first!*",
-                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+                `👛 *Wallet Required*\n\nYou need to set a wallet first.\n\nPlease send your BEP20 wallet address.\nIt must start with \`0x\` and be 42 characters long.`,
+                { parse_mode: 'Markdown', ...removeKeyboard() }
             );
+            updateUser(userId, { pending_state: 'waiting_wallet' });
             return;
         }
         
@@ -564,16 +626,22 @@ bot.on('message', async (msg) => {
         updateUser(userId, { pending_state: 'waiting_amount' });
     }
     
-    // ===== ADMIN PANEL =====
+    // ===== ADMIN PANEL (من القائمة) =====
     else if (text === '👑 Admin Panel') {
-        if (!ADMIN_IDS.includes(Number(userId))) return;
+        // Check if user is in ADMIN_IDS
+        if (!ADMIN_IDS.includes(Number(userId))) {
+            await bot.sendMessage(chatId,
+                `⛔ *Unauthorized Access*`,
+                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+            );
+            return;
+        }
         
         if (!isAdminLoggedIn(userId)) {
             await bot.sendMessage(chatId,
-                "🔐 *Admin Login*\n\nEnter password:",
-                { parse_mode: 'Markdown', ...removeKeyboard() }
+                "🔐 *Admin Login*\n\nPlease use /admin command to login.",
+                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
             );
-            updateUser(userId, { pending_state: 'admin_login' });
             return;
         }
         
@@ -664,6 +732,16 @@ bot.on('message', async (msg) => {
     
     // ===== ADMIN LOGIN =====
     else if (user.pending_state === 'admin_login') {
+        // Check if user is in ADMIN_IDS
+        if (!ADMIN_IDS.includes(Number(userId))) {
+            await bot.sendMessage(chatId,
+                `⛔ *Unauthorized Access*`,
+                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+            );
+            updateUser(userId, { pending_state: null });
+            return;
+        }
+        
         if (text === ADMIN_PASSWORD) {
             adminLogin(userId);
             updateUser(userId, { pending_state: null });
@@ -682,10 +760,14 @@ bot.on('message', async (msg) => {
                 `• Withdrawn: ${formatRefi(stats.total_withdrawn)}\n` +
                 `• Pending: ${stats.pending_withdrawals}\n` +
                 `• Uptime: ${hours}h ${minutes}m`,
-                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+                { parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
             );
         } else {
-            await bot.sendMessage(chatId, "❌ *Wrong password!*", { parse_mode: 'Markdown' });
+            await bot.sendMessage(chatId,
+                "❌ *Wrong password!*",
+                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+            );
+            updateUser(userId, { pending_state: null });
         }
     }
 });
@@ -702,6 +784,15 @@ bot.on('callback_query', async (query) => {
     
     await bot.answerCallbackQuery(query.id);
     console.log(`🔍 Admin Callback: ${data} from user ${userId}`);
+    
+    // Check if user is admin and logged in for admin callbacks
+    if (!ADMIN_IDS.includes(Number(userId)) || !isAdminLoggedIn(userId)) {
+        await bot.editMessageText(
+            `⛔ *Unauthorized*`,
+            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown' }
+        );
+        return;
+    }
     
     // Admin statistics
     if (data === 'admin_stats') {
@@ -1018,7 +1109,7 @@ console.log('\n' + '='.repeat(60));
 console.log('🚀 REFi BOT - ULTIMATE FINAL VERSION');
 console.log('='.repeat(60));
 console.log(`📱 Bot: @${botUsername}`);
-console.log(`👤 Admin: ${ADMIN_IDS[0]}`);
+console.log(`👤 Admin IDs: ${ADMIN_IDS.join(', ')} (only these IDs can access admin panel)`);
 console.log(`💰 Welcome: ${formatRefi(WELCOME_BONUS)}`);
 console.log(`👥 Referral: ${formatRefi(REFERRAL_BONUS)}`);
 console.log(`💸 Min withdraw: ${formatRefi(MIN_WITHDRAW)}`);
