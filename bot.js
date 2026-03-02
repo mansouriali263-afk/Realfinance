@@ -45,7 +45,7 @@ const REFERRAL_BONUS = 1_000_000;
 const MIN_WITHDRAW = 5_000_000;
 const ADMIN_IDS = [1653918641];
 const ADMIN_PASSWORD = 'Ali97$';
-const PAYMENT_CHANNEL = '@beefy_payment';
+const PAYMENT_GROUP = -1002692937287;  // Payment group for admins
 
 // القنوات المطلوبة
 const REQUIRED_CHANNELS = [
@@ -142,7 +142,7 @@ function getUserWithdrawals(userId, status = null) {
     }
 }
 
-// دالة طلب السحب الجديدة - ترسل للقناة مباشرة
+// دالة طلب السحب الجديدة - ترسل للمجموعة مباشرة
 async function requestWithdrawal(userId, amount, wallet) {
     const uid = String(userId);
     const user = db.users[uid];
@@ -167,47 +167,70 @@ async function requestWithdrawal(userId, amount, wallet) {
     
     // تجهيز تاريخ الطلب
     const now = new Date();
-    const dateStr = now.toLocaleDateString('ar-EG');
-    const timeStr = now.toLocaleTimeString('ar-EG');
+    const dateStr = now.toLocaleDateString('en-US');
+    const timeStr = now.toLocaleTimeString('en-US');
     
     // تجهيز رابط المستخدم
     const userLink = user.username 
         ? `@${user.username}` 
-        : `[اضغط للتواصل](tg://user?id=${userId})`;
+        : `[Click to contact](tg://user?id=${userId})`;
     
-    // رسالة القناة - واضحة وبسيطة
-    const channelMessage = 
-        `🆕 *طلب سحب جديد*\n\n` +
+    // رسالة المجموعة - واضحة وبسيطة
+    const groupMessage = 
+        `🆕 *New Withdrawal Request*\n\n` +
         `━━━━━━━━━━━━━━━━━━━━\n\n` +
-        `👤 *المستخدم:* ${user.first_name || 'غير معروف'}\n` +
-        `🆔 *معرف المستخدم:* \`${userId}\`\n` +
-        `📱 *اليوزر:* ${userLink}\n` +
-        `👥 *عدد الإحالات:* ${user.referrals_count || 0}\n` +
-        `💰 *المبلغ المطلوب:* ${formatRefi(amount)}\n` +
-        `📮 *عنوان المحفظة:* \`${wallet}\`\n\n` +
-        `📅 *التاريخ:* ${dateStr} - ${timeStr}\n` +
-        `🆔 *رقم الطلب:* \`${requestId}\`\n\n` +
+        `👤 *User:* ${user.first_name || 'Unknown'}\n` +
+        `🆔 *User ID:* \`${userId}\`\n` +
+        `📱 *Username:* ${userLink}\n` +
+        `👥 *Referrals:* ${user.referrals_count || 0}\n` +
+        `💰 *Amount:* ${formatRefi(amount)}\n` +
+        `📮 *Wallet Address:* \`${wallet}\`\n\n` +
+        `📅 *Date:* ${dateStr} - ${timeStr}\n` +
+        `🆔 *Request ID:* \`${requestId}\`\n\n` +
         `━━━━━━━━━━━━━━━━━━━━\n\n` +
-        `🔹 *للدفع:* انسخ عنوان المحفظة أعلاه وأرسل المبلغ\n` +
-        `🔹 *بعد الدفع:* أرسل للمستخدم صورة الإيصال هنا`;
+        `🔹 *To process:* Copy the wallet address above and send payment\n` +
+        `🔹 *After payment:* Reply to this message with confirmation`;
     
-    // إرسال للقناة
+    // محاولة إرسال للمجموعة
     try {
-        await bot.sendMessage(PAYMENT_CHANNEL, channelMessage, { 
+        console.log(`📢 Sending withdrawal request to group ${PAYMENT_GROUP}`);
+        
+        await bot.sendMessage(PAYMENT_GROUP, groupMessage, { 
             parse_mode: 'Markdown',
             disable_web_page_preview: true
         });
-        console.log(`📢 Withdrawal request sent to channel: ${requestId}`);
-        return true;
-    } catch (error) {
-        console.log('❌ Failed to send to channel:', error.message);
         
-        // إذا فشل الإرسال للقناة، نرجع الرصيد للمستخدم
+        console.log(`✅ Withdrawal request sent to group: ${requestId}`);
+        
+        // إرسال تأكيد للمستخدم
+        await bot.sendMessage(userId,
+            `✅ *Withdrawal Request Submitted!*\n\n` +
+            `💰 Amount: ${formatRefi(amount)}\n` +
+            `📮 Wallet: \`${wallet}\`\n\n` +
+            `Your request has been sent to the admins. You will be notified once processed.`,
+            { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+        );
+        
+        return true;
+        
+    } catch (error) {
+        console.log('❌ Failed to send to group:', error.message);
+        console.log('Error details:', error);
+        
+        // إذا فشل الإرسال، نرجع الرصيد للمستخدم
         updateUser(userId, { 
             balance: user.balance,
             total_withdrawn: user.total_withdrawn,
             pending_state: 'waiting_amount'
         });
+        
+        // إرسال رسالة خطأ للمستخدم
+        await bot.sendMessage(userId,
+            `❌ *Error*\n\n` +
+            `Could not process your request. Please try again later or contact support.`,
+            { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+        );
+        
         return false;
     }
 }
@@ -242,7 +265,7 @@ function getStats() {
         total_balance: users.reduce((s, u) => s + (u.balance || 0), 0),
         total_earned: users.reduce((s, u) => s + (u.total_earned || 0), 0),
         total_withdrawn: db.stats.total_withdrawn || 0,
-        pending_withdrawals: 0, // تم إلغاء الطلبات المعلقة في لوحة المشرف
+        pending_withdrawals: 0,
         total_referrals: users.reduce((s, u) => s + (u.referrals_count || 0), 0),
         twitter_followers: users.filter(u => u.twitter_followed).length,
         uptime: now - (db.stats.start_time || now)
@@ -283,6 +306,42 @@ async function checkChannels(userId) {
     }
     return true;
 }
+
+// ==================== TEST GROUP CONNECTION ====================
+async function testGroupConnection() {
+    try {
+        console.log(`🔍 Testing connection to group: ${PAYMENT_GROUP}`);
+        
+        // محاولة جلب معلومات المجموعة
+        const chat = await bot.getChat(PAYMENT_GROUP);
+        console.log(`✅ Group found: ${chat.title}`);
+        console.log(`📊 Group type: ${chat.type}`);
+        
+        // محاولة إرسال رسالة اختبار
+        await bot.sendMessage(PAYMENT_GROUP, 
+            `🤖 *Bot Connected*\n\n` +
+            `✅ Bot is running normally\n` +
+            `🕐 ${new Date().toLocaleString('en-US')}`,
+            { parse_mode: 'Markdown' }
+        );
+        
+        console.log('✅ Test message sent to group successfully');
+        
+    } catch (error) {
+        console.log('❌ Group connection failed:');
+        console.log('Error code:', error.code);
+        console.log('Error message:', error.message);
+        
+        if (error.code === 'ETELEGRAM' && error.message.includes('chat not found')) {
+            console.log('⚠️ Bot is not a member of the group or group does not exist');
+        } else if (error.code === 'ETELEGRAM' && error.message.includes('need administrator rights')) {
+            console.log('⚠️ Bot needs to be an admin in the group');
+        }
+    }
+}
+
+// شغل الاختبار بعد 3 ثواني
+setTimeout(testGroupConnection, 3000);
 
 // ==================== KEYBOARDS ====================
 function channelsKeyboard() {
@@ -615,8 +674,6 @@ bot.on('callback_query', async (query) => {
                 return;
             }
             
-            // إزالة التحقق من الطلبات المعلقة لأننا نرسل للقناة مباشرة
-            
             await bot.sendMessage(chatId,
                 `💸 *Withdrawal Request*\n\n` +
                 `Balance: ${formatRefi(user.balance || 0)}\n` +
@@ -935,26 +992,14 @@ bot.on('message', async (msg) => {
                 return;
             }
             
-            // استدعاء دالة طلب السحب الجديدة التي ترسل للقناة
+            // استدعاء دالة طلب السحب الجديدة التي ترسل للمجموعة
             const success = await requestWithdrawal(userId, amount, user.wallet);
             
             if (success) {
-                await bot.sendMessage(chatId,
-                    `✅ *Withdrawal Request Submitted!*\n\n` +
-                    `Your request has been sent to the admins.\n` +
-                    `You will be notified once processed.`,
-                    { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
-                );
-                
-                console.log(`💰 Withdrawal: ${userId} requested ${amount} REFi (sent to channel)`);
-            } else {
-                // إذا فشل الإرسال للقناة، نبلغ المستخدم
-                await bot.sendMessage(chatId,
-                    `❌ *Error*\n\n` +
-                    `Could not process your request. Please try again later or contact support.`,
-                    { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
-                );
+                // تم إرسال التأكيد داخل الدالة
+                console.log(`💰 Withdrawal: ${userId} requested ${amount} REFi (sent to group)`);
             }
+            // إذا فشل، الدالة ترسل رسالة الخطأ
         }
         
         else if (user.pending_state === 'admin_login') {
@@ -1080,5 +1125,5 @@ console.log(`👤 Admin ID: ${ADMIN_IDS[0]}`);
 console.log(`💰 Welcome: ${formatRefi(WELCOME_BONUS)}`);
 console.log(`👥 Referral: ${formatRefi(REFERRAL_BONUS)}`);
 console.log(`💸 Min withdraw: ${formatRefi(MIN_WITHDRAW)}`);
-console.log(`📢 Payment channel: ${PAYMENT_CHANNEL}`);
+console.log(`📢 Payment Group ID: ${PAYMENT_GROUP}`);
 console.log('='.repeat(60));
