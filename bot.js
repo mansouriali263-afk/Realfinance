@@ -10,19 +10,6 @@ const token = process.env.BOT_TOKEN || '7823073143:AAHP0N0-_BwakdWG_QblRD8z8I8e6
 const botUsername = 'RealnetworkPaybot';
 const bot = new TelegramBot(token, { polling: true });
 
-// Force stop any existing webhook and clear pending updates
-bot.deleteWebHook().then(() => {
-    console.log('✅ Webhook deleted');
-}).catch(err => {
-    console.log('⚠️ No webhook to delete');
-});
-
-bot.getUpdates({ offset: -1 }).then(updates => {
-    console.log('✅ Cleared pending updates');
-}).catch(err => {
-    console.log('⚠️ Could not clear updates');
-});
-
 const WELCOME_BONUS = 1000000;
 const REFERRAL_BONUS = 1000000;
 const MIN_WITHDRAW = 5000000;
@@ -190,7 +177,7 @@ function isValidWallet(wallet) {
     return wallet && wallet.startsWith('0x') && wallet.length === 42;
 }
 
-// ==================== KEYBOARDS - LIKE THE IMAGE ====================
+// ==================== KEYBOARDS ====================
 function channelsKeyboard() {
     // Floating buttons for channels (before verification)
     const keyboard = [];
@@ -207,27 +194,26 @@ function channelsKeyboard() {
     return { inline_keyboard: keyboard };
 }
 
-function mainMenuKeyboard(userId) {
-    // Bottom navigation menu exactly like the image
+function bottomNavigation(userId) {
+    // Bottom navigation menu (always at the bottom) - Like the image
     const user = db.users[String(userId)] || {};
     
-    // First row - 4 buttons (Balance, Invest, Reinvest, Withdraw)
+    // Create bottom navigation similar to the image
     const keyboard = [
         [
             { text: '💰 Balance', callback_data: 'bal' },
-            { text: '📊 Stats', callback_data: 'stats' },
-            { text: '🔗 Referral', callback_data: 'ref' },
-            { text: '💸 Withdraw', callback_data: 'wd' }
+            { text: '🔗 Referral', callback_data: 'ref' }
         ],
-        // Second row - 5 buttons (Calculator, Referral, Wallet, Statistics, Support)
         [
-            { text: '👛 Wallet', callback_data: 'wallet' },
-            { text: '📈 Calculator', callback_data: 'calc' },
-            { text: '👥 Referrals', callback_data: 'refs' },
-            { text: '📋 History', callback_data: 'history' },
-            { text: '🆘 Support', callback_data: 'support' }
+            { text: '📊 Stats', callback_data: 'stats' },
+            { text: '👛 Wallet', callback_data: 'wallet' }
         ]
     ];
+    
+    // Add withdraw button if wallet exists
+    if (user.wallet) {
+        keyboard[1][1] = { text: '💸 Withdraw', callback_data: 'wd' };
+    }
     
     // Add admin button for admins
     if (ADMIN_IDS.includes(Number(userId)) && isAdminLoggedIn(Number(userId))) {
@@ -326,7 +312,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     if (user.verified) {
         await bot.sendMessage(chatId, 
             `🎯 *Welcome Back!*\n\n💰 Balance: ${formatRefi(user.balance)}`,
-            { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard(userId) }
+            { parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
         );
         return;
     }
@@ -373,10 +359,10 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
             `✅ *Verification Successful!*\n\n` +
             `✨ Added ${formatRefi(WELCOME_BONUS)} to your balance\n` +
             `💰 Current balance: ${formatRefi(newBalance)}`,
-            { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard(userId) }
+            { parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
         );
     } else {
-        // Welcome message with channel links
+        // ===== THIS IS THE CHANNELS VERIFICATION MESSAGE =====
         const channelsText = REQUIRED_CHANNELS.map(ch => `• ${ch.name}`).join('\n');
         
         await bot.sendMessage(chatId, 
@@ -450,7 +436,7 @@ bot.on('callback_query', async (query) => {
                         chat_id: chatId,
                         message_id: msgId,
                         parse_mode: 'Markdown',
-                        reply_markup: mainMenuKeyboard(userId)
+                        reply_markup: bottomNavigation(userId)
                     }
                 );
             }
@@ -571,12 +557,12 @@ bot.on('callback_query', async (query) => {
         
         if (!user.wallet) {
             await bot.editMessageText(
-                "⚠️ *Wallet Required*\n\nYou need to set a wallet address first.\nPlease use the 👛 Wallet button.",
+                "⚠️ *Wallet Required*\n\nYou need to set a wallet address first.\nPlease use the 👛 Set Wallet button.",
                 {
                     chat_id: chatId,
                     message_id: msgId,
                     parse_mode: 'Markdown',
-                    reply_markup: mainMenuKeyboard(userId)
+                    reply_markup: bottomNavigation(userId)
                 }
             );
             return;
@@ -594,7 +580,7 @@ bot.on('callback_query', async (query) => {
                     chat_id: chatId,
                     message_id: msgId,
                     parse_mode: 'Markdown',
-                    reply_markup: mainMenuKeyboard(userId)
+                    reply_markup: bottomNavigation(userId)
                 }
             );
             return;
@@ -612,7 +598,7 @@ bot.on('callback_query', async (query) => {
                     chat_id: chatId,
                     message_id: msgId,
                     parse_mode: 'Markdown',
-                    reply_markup: mainMenuKeyboard(userId)
+                    reply_markup: bottomNavigation(userId)
                 }
             );
             return;
@@ -634,93 +620,6 @@ bot.on('callback_query', async (query) => {
         updateUser(userId, { pending_state: 'waiting_amount' });
     }
     
-    // ===== REFS (Referrals list) =====
-    else if (data === 'refs') {
-        const user = db.users[String(userId)];
-        await bot.editMessageText(
-            `👥 *Your Referrals*\n\n` +
-            `• Total referrals: ${user.referrals_count || 0}\n` +
-            `• Total clicks: ${user.referral_clicks || 0}\n` +
-            `• Earnings: ${formatRefi((user.referrals_count || 0) * REFERRAL_BONUS)}`,
-            {
-                chat_id: chatId,
-                message_id: msgId,
-                parse_mode: 'Markdown',
-                reply_markup: backButton()
-            }
-        );
-    }
-    
-    // ===== HISTORY =====
-    else if (data === 'history') {
-        const withdrawals = getUserWithdrawals(userId);
-        if (withdrawals.length === 0) {
-            await bot.editMessageText(
-                `📋 *Withdrawal History*\n\nNo withdrawal history yet.`,
-                {
-                    chat_id: chatId,
-                    message_id: msgId,
-                    parse_mode: 'Markdown',
-                    reply_markup: backButton()
-                }
-            );
-            return;
-        }
-        
-        let text = `📋 *Withdrawal History*\n\n`;
-        withdrawals.slice(0, 5).forEach(w => {
-            const date = new Date(w.created_at * 1000).toLocaleDateString();
-            text += `• ${date}: ${formatRefi(w.amount)} - ${w.status}\n`;
-        });
-        
-        await bot.editMessageText(
-            text,
-            {
-                chat_id: chatId,
-                message_id: msgId,
-                parse_mode: 'Markdown',
-                reply_markup: backButton()
-            }
-        );
-    }
-    
-    // ===== SUPPORT =====
-    else if (data === 'support') {
-        await bot.editMessageText(
-            `🆘 *Support*\n\n` +
-            `For support, please contact:\n` +
-            `📧 Email: support@realfinance.com\n` +
-            `💬 Telegram: @Realfinance_Support`,
-            {
-                chat_id: chatId,
-                message_id: msgId,
-                parse_mode: 'Markdown',
-                reply_markup: backButton()
-            }
-        );
-    }
-    
-    // ===== CALCULATOR =====
-    else if (data === 'calc') {
-        const user = db.users[String(userId)];
-        const referralEarnings = (user.referrals_count || 0) * REFERRAL_BONUS;
-        const totalValue = user.balance + referralEarnings;
-        
-        await bot.editMessageText(
-            `📈 *Calculator*\n\n` +
-            `• Current balance: ${formatRefi(user.balance)}\n` +
-            `• Referral earnings: ${formatRefi(referralEarnings)}\n` +
-            `• Total value: ${formatRefi(totalValue)}\n\n` +
-            `💰 USD Value: $${(totalValue / 1000000 * 2).toFixed(2)}`,
-            {
-                chat_id: chatId,
-                message_id: msgId,
-                parse_mode: 'Markdown',
-                reply_markup: backButton()
-            }
-        );
-    }
-    
     // ===== BACK =====
     else if (data === 'back') {
         const user = db.users[String(userId)];
@@ -730,7 +629,7 @@ bot.on('callback_query', async (query) => {
                 chat_id: chatId,
                 message_id: msgId,
                 parse_mode: 'Markdown',
-                reply_markup: mainMenuKeyboard(userId)
+                reply_markup: bottomNavigation(userId)
             }
         );
         updateUser(userId, { pending_state: null });
@@ -994,7 +893,7 @@ bot.on('callback_query', async (query) => {
                 chat_id: chatId,
                 message_id: msgId,
                 parse_mode: 'Markdown',
-                reply_markup: mainMenuKeyboard(userId)
+                reply_markup: bottomNavigation(userId)
             }
         );
     }
@@ -1025,7 +924,7 @@ bot.on('message', async (msg) => {
                 `✅ *Wallet saved successfully!*\n\n` +
                 `Wallet: \`${shortWallet(text)}\`\n\n` +
                 `You can now withdraw your REFi tokens.`,
-                { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard(userId) }
+                { parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
             );
             console.log(`👛 User ${userId} saved wallet`);
         } else {
@@ -1098,7 +997,7 @@ bot.on('message', async (msg) => {
             `• Amount: ${formatRefi(amount)}\n` +
             `• Status: *Pending Review*\n\n` +
             `You will be notified once processed.`,
-            { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard(userId) }
+            { parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
         );
         
         console.log(`💰 User ${userId} requested withdrawal of ${amount} REFi`);
