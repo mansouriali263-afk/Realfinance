@@ -344,11 +344,11 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     // Always show welcome message with channels + Twitter first
     const channelsText = REQUIRED_CHANNELS.map(ch => `• ${ch.name}`).join('\n');
     await bot.sendMessage(chatId, 
-        `🎉 *Welcome to Realfinancepaybot!*\n\n` +
+        `🎉 *Welcome to Real finance airdrop bot!*\n\n` +
         `💰 *Welcome Bonus:* ${formatRefi(WELCOME_BONUS)}\n` +
         `👥 *Referral Bonus:* ${formatRefi(REFERRAL_BONUS)} per friend\n\n` +
         `📢 *To start, you must join these channels first:*\n${channelsText}\n\n` +
-        `🐦 *Optional:* Follow on X for updates\n\n` +
+        `🐦 *Follow Advertiser on X for updates*\n\n` +
         `👇 After joining, click the VERIFY button`,
         { 
             parse_mode: 'Markdown', 
