@@ -1,4 +1,4 @@
-// ==================== REFi BOT - PROFESSIONAL FINAL VERSION ====================
+// ==================== REFi BOT - PROFESSIONAL FINAL VERSION (FIXED) ====================
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const express = require('express');
@@ -388,7 +388,7 @@ bot.onText(/\/admin/, async (msg) => {
     updateUser(userId, { pending_state: 'admin_login' });
 });
 
-// ==================== CALLBACK QUERY HANDLER ====================
+// ==================== CALLBACK QUERY HANDLER (FIXED VERSION) ====================
 bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
     const userId = query.from.id;
@@ -400,6 +400,8 @@ bot.on('callback_query', async (query) => {
     try {
         // ===== VERIFY =====
         if (data === 'verify') {
+            await bot.answerCallbackQuery(query.id);
+            
             const joined = await checkChannels(userId);
             const user = db.users[String(userId)];
             
@@ -421,7 +423,7 @@ bot.on('callback_query', async (query) => {
                         });
                         
                         try {
-                            await bot.sendMessage(referrerId, 
+                            await bot.sendMessage(Number(referrerId), 
                                 `🎉 *You earned ${formatRefi(REFERRAL_BONUS)}!*`,
                                 { parse_mode: 'Markdown' }
                             );
@@ -465,23 +467,22 @@ bot.on('callback_query', async (query) => {
                     }
                 );
             }
-            
-            await bot.answerCallbackQuery(query.id);
         }
         
         // ===== WITHDRAW NOW =====
         else if (data === 'withdraw_now') {
+            await bot.answerCallbackQuery(query.id);
+            
             const user = db.users[String(userId)];
             if (!user) return;
             
-            await bot.deleteMessage(chatId, msgId);
+            await bot.deleteMessage(chatId, msgId).catch(() => {});
             
             if (!user.verified) {
                 await bot.sendMessage(chatId,
                     `❌ *Please verify first!*\n\nYou need to join the channels and click VERIFY.`,
                     { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
                 );
-                await bot.answerCallbackQuery(query.id);
                 return;
             }
             
@@ -491,7 +492,6 @@ bot.on('callback_query', async (query) => {
                     { parse_mode: 'Markdown', ...removeKeyboard() }
                 );
                 updateUser(userId, { pending_state: 'waiting_wallet' });
-                await bot.answerCallbackQuery(query.id);
                 return;
             }
             
@@ -504,7 +504,6 @@ bot.on('callback_query', async (query) => {
                     `You need **${formatRefi(needed)}** more to withdraw.`,
                     { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
                 );
-                await bot.answerCallbackQuery(query.id);
                 return;
             }
             
@@ -514,7 +513,6 @@ bot.on('callback_query', async (query) => {
                     `⚠️ You have ${pending.length} pending requests.`,
                     { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
                 );
-                await bot.answerCallbackQuery(query.id);
                 return;
             }
             
@@ -528,22 +526,23 @@ bot.on('callback_query', async (query) => {
             );
             
             updateUser(userId, { pending_state: 'waiting_amount' });
-            await bot.answerCallbackQuery(query.id);
         }
         
         // ===== BACK TO MENU =====
         else if (data === 'back_to_menu') {
-            await bot.deleteMessage(chatId, msgId);
+            await bot.answerCallbackQuery(query.id);
+            await bot.deleteMessage(chatId, msgId).catch(() => {});
             const user = db.users[String(userId)];
             await bot.sendMessage(chatId,
-                `🎯 *Main Menu*\n\n💰 Balance: ${formatRefi(user.balance)}`,
+                `🎯 *Main Menu*\n\n💰 Balance: ${formatRefi(user?.balance || 0)}`,
                 { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
             );
-            await bot.answerCallbackQuery(query.id);
         }
         
         // ===== ADMIN STATISTICS =====
         else if (data === 'admin_stats') {
+            await bot.answerCallbackQuery(query.id);
+            
             if (!ADMIN_IDS.includes(Number(userId)) || !isAdminLoggedIn(userId)) {
                 await bot.answerCallbackQuery(query.id, { text: '⛔ Unauthorized', show_alert: true });
                 return;
@@ -559,69 +558,82 @@ bot.on('callback_query', async (query) => {
                 `Pending: ${stats.pending_withdrawals}`,
                 { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
             );
-            await bot.answerCallbackQuery(query.id);
         }
         
-        // ===== ADMIN PENDING WITHDRAWALS =====
+        // ===== ADMIN PENDING WITHDRAWALS (FIXED) =====
         else if (data === 'admin_pending') {
+            await bot.answerCallbackQuery(query.id);
+            
             if (!ADMIN_IDS.includes(Number(userId)) || !isAdminLoggedIn(userId)) {
                 await bot.answerCallbackQuery(query.id, { text: '⛔ Unauthorized', show_alert: true });
                 return;
             }
             
-            const pending = getPendingWithdrawals();
-            
-            if (pending.length === 0) {
+            try {
+                const pending = getPendingWithdrawals();
+                
+                if (pending.length === 0) {
+                    await bot.editMessageText(
+                        "✅ No pending withdrawals",
+                        { 
+                            chat_id: chatId, 
+                            message_id: msgId, 
+                            parse_mode: 'Markdown',
+                            reply_markup: adminInlineKeyboard() 
+                        }
+                    );
+                    return;
+                }
+                
+                let text = "💰 *Pending Withdrawals*\n\n";
+                const keyboard = { inline_keyboard: [] };
+                
+                for (let i = 0; i < Math.min(pending.length, 5); i++) {
+                    const w = pending[i];
+                    const user = db.users[w.user_id] || { first_name: 'Unknown', username: '' };
+                    
+                    text += `🆔 *${w.id.slice(0, 8)}...*\n`;
+                    text += `👤 ${user.first_name} (@${user.username || 'None'})\n`;
+                    text += `💰 ${formatRefi(w.amount)}\n`;
+                    text += `📅 ${new Date(w.created_at * 1000).toLocaleString()}\n\n`;
+                    
+                    keyboard.inline_keyboard.push([
+                        { text: `📋 Process ${w.id.slice(0, 8)}`, callback_data: `process_${w.id}` }
+                    ]);
+                }
+                
+                if (pending.length > 5) {
+                    text += `*... and ${pending.length - 5} more*\n\n`;
+                }
+                
+                keyboard.inline_keyboard.push([{ text: '🔙 Back to Admin', callback_data: 'admin_back' }]);
+                
                 await bot.editMessageText(
-                    "✅ No pending withdrawals",
+                    text,
                     { 
                         chat_id: chatId, 
                         message_id: msgId, 
-                        parse_mode: 'Markdown',
+                        parse_mode: 'Markdown', 
+                        reply_markup: keyboard 
+                    }
+                );
+            } catch (error) {
+                console.error('❌ Error in admin_pending:', error.message);
+                await bot.editMessageText(
+                    "❌ Error loading withdrawals",
+                    { 
+                        chat_id: chatId, 
+                        message_id: msgId, 
                         reply_markup: adminInlineKeyboard() 
                     }
                 );
-                await bot.answerCallbackQuery(query.id);
-                return;
             }
-            
-            let text = "💰 *Pending Withdrawals*\n\n";
-            const keyboard = { inline_keyboard: [] };
-            
-            for (let i = 0; i < Math.min(pending.length, 5); i++) {
-                const w = pending[i];
-                const user = db.users[w.user_id] || { first_name: 'Unknown', username: '' };
-                
-                text += `🆔 *${w.id.slice(0, 8)}...*\n`;
-                text += `👤 ${user.first_name} (@${user.username || 'None'})\n`;
-                text += `💰 ${formatRefi(w.amount)}\n`;
-                text += `📅 ${new Date(w.created_at * 1000).toLocaleString()}\n\n`;
-                
-                keyboard.inline_keyboard.push([
-                    { text: `📋 Process ${w.id.slice(0, 8)}`, callback_data: `process_${w.id}` }
-                ]);
-            }
-            
-            if (pending.length > 5) {
-                text += `*... and ${pending.length - 5} more*\n\n`;
-            }
-            
-            keyboard.inline_keyboard.push([{ text: '🔙 Back to Admin', callback_data: 'admin_back' }]);
-            
-            await bot.editMessageText(
-                text,
-                { 
-                    chat_id: chatId, 
-                    message_id: msgId, 
-                    parse_mode: 'Markdown', 
-                    reply_markup: keyboard 
-                }
-            );
-            await bot.answerCallbackQuery(query.id);
         }
         
         // ===== PROCESS WITHDRAWAL =====
         else if (data.startsWith('process_')) {
+            await bot.answerCallbackQuery(query.id);
+            
             if (!ADMIN_IDS.includes(Number(userId)) || !isAdminLoggedIn(userId)) {
                 await bot.answerCallbackQuery(query.id, { text: '⛔ Unauthorized', show_alert: true });
                 return;
@@ -633,18 +645,7 @@ bot.on('callback_query', async (query) => {
             const w = db.withdrawals[rid];
             if (!w) {
                 await bot.answerCallbackQuery(query.id, { text: '❌ Withdrawal not found', show_alert: true });
-                
-                // تحديث قائمة الطلبات المعلقة
-                const pending = getPendingWithdrawals();
-                if (pending.length === 0) {
-                    await bot.editMessageText(
-                        "✅ No pending withdrawals",
-                        { chat_id: chatId, message_id: msgId, reply_markup: adminInlineKeyboard() }
-                    );
-                } else {
-                    // إعادة عرض القائمة
-                    bot.emit('callback_query', { ...query, data: 'admin_pending' });
-                }
+                bot.emit('callback_query', { ...query, data: 'admin_pending' });
                 return;
             }
             
@@ -673,11 +674,12 @@ bot.on('callback_query', async (query) => {
                     }
                 }
             );
-            await bot.answerCallbackQuery(query.id);
         }
         
         // ===== APPROVE WITHDRAWAL =====
         else if (data.startsWith('approve_')) {
+            await bot.answerCallbackQuery(query.id);
+            
             if (!ADMIN_IDS.includes(Number(userId)) || !isAdminLoggedIn(userId)) {
                 await bot.answerCallbackQuery(query.id, { text: '⛔ Unauthorized', show_alert: true });
                 return;
@@ -697,13 +699,11 @@ bot.on('callback_query', async (query) => {
                 return;
             }
             
-            // تحديث حالة الطلب
             w.status = 'approved';
             w.processed_at = Date.now() / 1000;
             w.processed_by = userId;
             saveDB();
             
-            // إشعار المستخدم
             try {
                 await bot.sendMessage(Number(w.user_id),
                     `✅ *Withdrawal Approved!*\n\n` +
@@ -714,7 +714,6 @@ bot.on('callback_query', async (query) => {
                 );
             } catch (e) {}
             
-            // نشر في قناة المدفوعات
             try {
                 const user = db.users[w.user_id] || {};
                 const channelMsg = 
@@ -726,14 +725,12 @@ bot.on('callback_query', async (query) => {
                     `⏱️ Processed: ${new Date().toLocaleString()}`;
                 
                 await bot.sendMessage(PAYMENT_CHANNEL, channelMsg, { parse_mode: 'Markdown' });
-                console.log(`📢 Posted to channel: ${PAYMENT_CHANNEL}`);
             } catch (e) {
                 console.log('❌ Failed to post to channel:', e.message);
             }
             
             await bot.answerCallbackQuery(query.id, { text: '✅ Approved' });
             
-            // العودة لقائمة الطلبات المعلقة
             const pending = getPendingWithdrawals();
             if (pending.length === 0) {
                 await bot.editMessageText(
@@ -741,13 +738,14 @@ bot.on('callback_query', async (query) => {
                     { chat_id: chatId, message_id: msgId, reply_markup: adminInlineKeyboard() }
                 );
             } else {
-                // إعادة عرض القائمة
                 bot.emit('callback_query', { ...query, data: 'admin_pending' });
             }
         }
         
         // ===== REJECT WITHDRAWAL =====
         else if (data.startsWith('reject_')) {
+            await bot.answerCallbackQuery(query.id);
+            
             if (!ADMIN_IDS.includes(Number(userId)) || !isAdminLoggedIn(userId)) {
                 await bot.answerCallbackQuery(query.id, { text: '⛔ Unauthorized', show_alert: true });
                 return;
@@ -767,19 +765,16 @@ bot.on('callback_query', async (query) => {
                 return;
             }
             
-            // إعادة الرصيد للمستخدم
             const user = db.users[w.user_id];
             if (user) {
                 user.balance += w.amount;
             }
             
-            // تحديث حالة الطلب
             w.status = 'rejected';
             w.processed_at = Date.now() / 1000;
             w.processed_by = userId;
             saveDB();
             
-            // إشعار المستخدم
             try {
                 await bot.sendMessage(Number(w.user_id),
                     `❌ *Withdrawal Rejected*\n\n` +
@@ -790,7 +785,6 @@ bot.on('callback_query', async (query) => {
                 );
             } catch (e) {}
             
-            // نشر في قناة المدفوعات
             try {
                 const userData = db.users[w.user_id] || {};
                 const channelMsg = 
@@ -802,14 +796,12 @@ bot.on('callback_query', async (query) => {
                     `⏱️ Processed: ${new Date().toLocaleString()}`;
                 
                 await bot.sendMessage(PAYMENT_CHANNEL, channelMsg, { parse_mode: 'Markdown' });
-                console.log(`📢 Posted to channel: ${PAYMENT_CHANNEL}`);
             } catch (e) {
                 console.log('❌ Failed to post to channel:', e.message);
             }
             
             await bot.answerCallbackQuery(query.id, { text: '❌ Rejected' });
             
-            // العودة لقائمة الطلبات المعلقة
             const pending = getPendingWithdrawals();
             if (pending.length === 0) {
                 await bot.editMessageText(
@@ -817,13 +809,14 @@ bot.on('callback_query', async (query) => {
                     { chat_id: chatId, message_id: msgId, reply_markup: adminInlineKeyboard() }
                 );
             } else {
-                // إعادة عرض القائمة
                 bot.emit('callback_query', { ...query, data: 'admin_pending' });
             }
         }
         
         // ===== ADMIN BACK =====
         else if (data === 'admin_back') {
+            await bot.answerCallbackQuery(query.id);
+            
             if (!ADMIN_IDS.includes(Number(userId)) || !isAdminLoggedIn(userId)) {
                 await bot.answerCallbackQuery(query.id, { text: '⛔ Unauthorized', show_alert: true });
                 return;
@@ -840,11 +833,12 @@ bot.on('callback_query', async (query) => {
                 `• Referrals: ${stats.total_referrals}`,
                 { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
             );
-            await bot.answerCallbackQuery(query.id);
         }
         
         // ===== ADMIN BROADCAST =====
         else if (data === 'admin_broadcast') {
+            await bot.answerCallbackQuery(query.id);
+            
             if (!ADMIN_IDS.includes(Number(userId)) || !isAdminLoggedIn(userId)) {
                 await bot.answerCallbackQuery(query.id, { text: '⛔ Unauthorized', show_alert: true });
                 return;
@@ -862,11 +856,12 @@ bot.on('callback_query', async (query) => {
                 }
             );
             updateUser(userId, { pending_state: 'admin_broadcast' });
-            await bot.answerCallbackQuery(query.id);
         }
         
         // ===== ADMIN USERS =====
         else if (data === 'admin_users') {
+            await bot.answerCallbackQuery(query.id);
+            
             if (!ADMIN_IDS.includes(Number(userId)) || !isAdminLoggedIn(userId)) {
                 await bot.answerCallbackQuery(query.id, { text: '⛔ Unauthorized', show_alert: true });
                 return;
@@ -891,11 +886,12 @@ bot.on('callback_query', async (query) => {
                 text,
                 { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
             );
-            await bot.answerCallbackQuery(query.id);
         }
         
         // ===== ADMIN LOGOUT =====
         else if (data === 'admin_logout') {
+            await bot.answerCallbackQuery(query.id);
+            
             if (!ADMIN_IDS.includes(Number(userId))) {
                 await bot.answerCallbackQuery(query.id, { text: '⛔ Unauthorized', show_alert: true });
                 return;
@@ -904,20 +900,25 @@ bot.on('callback_query', async (query) => {
             adminLogout(userId);
             const user = db.users[String(userId)];
             await bot.editMessageText(
-                `🔒 *Logged Out*\n\n💰 Balance: ${formatRefi(user.balance)}`,
+                `🔒 *Logged Out*\n\n💰 Balance: ${formatRefi(user?.balance || 0)}`,
                 { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: bottomReplyKeyboard(userId) }
             );
-            await bot.answerCallbackQuery(query.id);
         }
         
         else {
-            await bot.answerCallbackQuery(query.id);
+            await bot.answerCallbackQuery(query.id, { text: 'Unknown command', show_alert: false });
+            console.log(`⚠️ Unknown callback: ${data}`);
         }
         
     } catch (error) {
         console.error('❌ Error in callback:', error.message);
+        console.error(error.stack);
         try {
             await bot.answerCallbackQuery(query.id, { text: '❌ Error occurred', show_alert: false });
+            await bot.editMessageText(
+                `❌ An error occurred. Please try again.`,
+                { chat_id: chatId, message_id: msgId }
+            );
         } catch (e) {}
     }
 });
