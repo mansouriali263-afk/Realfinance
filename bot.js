@@ -42,7 +42,7 @@ const REQUIRED_CHANNELS = [
     { name: 'Daily Airdrop', username: '@Daily_AirdropX' }
 ];
 
-// Twitter account for optional follow (no verification required)
+// Twitter account (يظهر فقط في أول رسالة)
 const TWITTER_ACCOUNT = {
     name: 'Daily Airdrop on X',
     username: '@Daily_AirdropX',
@@ -216,7 +216,7 @@ async function checkChannels(userId) {
 
 // ==================== KEYBOARDS ====================
 function channelsKeyboard() {
-    // Floating buttons for channels (appear before verification)
+    // Floating buttons for channels + Twitter (تظهر قبل التحقق فقط)
     const keyboard = [];
     REQUIRED_CHANNELS.forEach(ch => {
         keyboard.push([{ 
@@ -224,7 +224,7 @@ function channelsKeyboard() {
             url: `https://t.me/${ch.username.substring(1)}` 
         }]);
     });
-    // Add Twitter button (optional, no verification)
+    // Twitter button هنا فقط - في أول رسالة
     keyboard.push([{ 
         text: `🐦 Follow on X`, 
         url: TWITTER_ACCOUNT.url 
@@ -237,7 +237,7 @@ function channelsKeyboard() {
 }
 
 function bottomReplyKeyboard(userId) {
-    // Bottom fixed buttons (appear after verification)
+    // Bottom fixed buttons (تظهر بعد التحقق) - بدون Twitter
     const user = db.users[String(userId)] || {};
     
     // First row - 3 main buttons
@@ -251,12 +251,7 @@ function bottomReplyKeyboard(userId) {
     
     const keyboard = [row1, row2];
     
-    // Add Twitter follow button (optional)
-    if (!user.twitter_followed) {
-        keyboard.push(['🐦 Follow on X']);
-    }
-    
-    // Add admin button if admin
+    // Add admin button if admin (بدون Twitter)
     if (ADMIN_IDS.includes(Number(userId)) && isAdminLoggedIn(Number(userId))) {
         keyboard.push(['👑 Admin Panel']);
     }
@@ -346,7 +341,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
         return;
     }
     
-    // Always show welcome message with channels first
+    // Always show welcome message with channels + Twitter first
     const channelsText = REQUIRED_CHANNELS.map(ch => `• ${ch.name}`).join('\n');
     await bot.sendMessage(chatId, 
         `🎉 *Welcome to Realfinancepaybot!*\n\n` +
@@ -357,7 +352,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
         `👇 After joining, click the VERIFY button`,
         { 
             parse_mode: 'Markdown', 
-            reply_markup: channelsKeyboard() 
+            reply_markup: channelsKeyboard() // Twitter يظهر هنا فقط
         }
     );
 });
@@ -412,7 +407,7 @@ bot.on('callback_query', async (query) => {
                 }
             );
             
-            // Send main menu with bottom keyboard
+            // Send main menu with bottom keyboard (بدون Twitter)
             await bot.sendMessage(chatId,
                 `👇 Use the buttons below:`,
                 { ...bottomReplyKeyboard(userId) }
@@ -567,22 +562,6 @@ bot.on('message', async (msg) => {
         );
         
         updateUser(userId, { pending_state: 'waiting_amount' });
-    }
-    
-    // ===== FOLLOW ON X (TWITTER) =====
-    else if (text === '🐦 Follow on X') {
-        if (!user.twitter_followed) {
-            updateUser(userId, { twitter_followed: true });
-            await bot.sendMessage(chatId,
-                `✅ *Thanks for following!*\n\nYou've been marked as a follower.`,
-                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
-            );
-        } else {
-            await bot.sendMessage(chatId,
-                `✅ You're already following!`,
-                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
-            );
-        }
     }
     
     // ===== ADMIN PANEL =====
@@ -1044,5 +1023,5 @@ console.log(`💰 Welcome: ${formatRefi(WELCOME_BONUS)}`);
 console.log(`👥 Referral: ${formatRefi(REFERRAL_BONUS)}`);
 console.log(`💸 Min withdraw: ${formatRefi(MIN_WITHDRAW)}`);
 console.log(`📢 Payment channel: ${PAYMENT_CHANNEL}`);
-console.log(`🐦 Twitter: ${TWITTER_ACCOUNT.username}`);
+console.log(`🐦 Twitter: ${TWITTER_ACCOUNT.username} (يظهر في أول رسالة فقط)`);
 console.log('='.repeat(60));
