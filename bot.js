@@ -126,16 +126,6 @@ function updateUser(userId, updates) {
 }
 
 // ==================== WITHDRAWAL FUNCTIONS ====================
-function getPendingWithdrawals() { 
-    try {
-        if (!db || !db.withdrawals) return [];
-        return Object.values(db.withdrawals).filter(w => w && w.status === 'pending');
-    } catch (error) {
-        console.log('❌ Error in getPendingWithdrawals:', error.message);
-        return [];
-    }
-}
-
 function getUserWithdrawals(userId, status = null) {
     try {
         const uid = String(userId);
@@ -152,40 +142,74 @@ function getUserWithdrawals(userId, status = null) {
     }
 }
 
-function createWithdrawal(userId, amount, wallet) {
+// دالة طلب السحب الجديدة - ترسل للقناة مباشرة
+async function requestWithdrawal(userId, amount, wallet) {
     const uid = String(userId);
-    const rid = `W${Math.floor(Date.now() / 1000)}${uid}${Math.floor(Math.random() * 9000) + 1000}`;
+    const user = db.users[uid];
+    if (!user) return false;
     
-    db.withdrawals[rid] = {
-        id: rid,
-        user_id: uid,
-        amount: amount,
-        wallet: wallet,
-        status: 'pending',
-        created_at: Date.now() / 1000
-    };
+    // خصم الرصيد
+    const newBalance = (user.balance || 0) - amount;
+    const newWithdrawn = (user.total_withdrawn || 0) + amount;
+    
+    updateUser(userId, { 
+        balance: newBalance, 
+        total_withdrawn: newWithdrawn,
+        pending_state: null 
+    });
+    
+    // تحديث إحصائيات السحوبات
+    db.stats.total_withdrawn = (db.stats.total_withdrawn || 0) + amount;
     saveDB();
-    console.log(`💰 Withdrawal created: ${rid} for ${amount} REFi`);
-    return rid;
-}
-
-function processWithdrawal(rid, adminId, status) {
-    const w = db.withdrawals[rid];
-    if (!w || w.status !== 'pending') return false;
     
-    w.status = status;
-    w.processed_at = Date.now() / 1000;
-    w.processed_by = adminId;
+    // تجهيز معرف الطلب (للتتبع فقط)
+    const requestId = `WD${Math.floor(Date.now() / 1000)}${uid.slice(-4)}`;
     
-    if (status === 'rejected') {
-        const user = db.users[w.user_id];
-        if (user) {
-            user.balance += w.amount;
-        }
+    // تجهيز تاريخ الطلب
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('ar-EG');
+    const timeStr = now.toLocaleTimeString('ar-EG');
+    
+    // تجهيز رابط المستخدم
+    const userLink = user.username 
+        ? `@${user.username}` 
+        : `[اضغط للتواصل](tg://user?id=${userId})`;
+    
+    // رسالة القناة - واضحة وبسيطة
+    const channelMessage = 
+        `🆕 *طلب سحب جديد*\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `👤 *المستخدم:* ${user.first_name || 'غير معروف'}\n` +
+        `🆔 *معرف المستخدم:* \`${userId}\`\n` +
+        `📱 *اليوزر:* ${userLink}\n` +
+        `👥 *عدد الإحالات:* ${user.referrals_count || 0}\n` +
+        `💰 *المبلغ المطلوب:* ${formatRefi(amount)}\n` +
+        `📮 *عنوان المحفظة:* \`${wallet}\`\n\n` +
+        `📅 *التاريخ:* ${dateStr} - ${timeStr}\n` +
+        `🆔 *رقم الطلب:* \`${requestId}\`\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `🔹 *للدفع:* انسخ عنوان المحفظة أعلاه وأرسل المبلغ\n` +
+        `🔹 *بعد الدفع:* أرسل للمستخدم صورة الإيصال هنا`;
+    
+    // إرسال للقناة
+    try {
+        await bot.sendMessage(PAYMENT_CHANNEL, channelMessage, { 
+            parse_mode: 'Markdown',
+            disable_web_page_preview: true
+        });
+        console.log(`📢 Withdrawal request sent to channel: ${requestId}`);
+        return true;
+    } catch (error) {
+        console.log('❌ Failed to send to channel:', error.message);
+        
+        // إذا فشل الإرسال للقناة، نرجع الرصيد للمستخدم
+        updateUser(userId, { 
+            balance: user.balance,
+            total_withdrawn: user.total_withdrawn,
+            pending_state: 'waiting_amount'
+        });
+        return false;
     }
-    saveDB();
-    console.log(`✅ Withdrawal ${rid} ${status} by admin ${adminId}`);
-    return true;
 }
 
 // ==================== ADMIN SESSION ====================
@@ -218,7 +242,7 @@ function getStats() {
         total_balance: users.reduce((s, u) => s + (u.balance || 0), 0),
         total_earned: users.reduce((s, u) => s + (u.total_earned || 0), 0),
         total_withdrawn: db.stats.total_withdrawn || 0,
-        pending_withdrawals: getPendingWithdrawals().length,
+        pending_withdrawals: 0, // تم إلغاء الطلبات المعلقة في لوحة المشرف
         total_referrals: users.reduce((s, u) => s + (u.referrals_count || 0), 0),
         twitter_followers: users.filter(u => u.twitter_followed).length,
         uptime: now - (db.stats.start_time || now)
@@ -314,7 +338,6 @@ function adminInlineKeyboard() {
     return {
         inline_keyboard: [
             [{ text: '📊 Statistics', callback_data: 'admin_stats' }],
-            [{ text: '💰 Pending Withdrawals', callback_data: 'admin_pending' }],
             [{ text: '📢 Broadcast', callback_data: 'admin_broadcast' }],
             [{ text: '👥 Users List', callback_data: 'admin_users' }],
             [{ text: '🔒 Logout', callback_data: 'admin_logout' }]
@@ -450,7 +473,6 @@ bot.onText(/\/admin/, async (msg) => {
             `• Twitter followers: ${stats.twitter_followers}\n` +
             `• Balance: ${formatRefi(stats.total_balance)}\n` +
             `• Withdrawn: ${formatRefi(stats.total_withdrawn)}\n` +
-            `• Pending withdrawals: ${stats.pending_withdrawals}\n` +
             `• Total referrals: ${stats.total_referrals}\n` +
             `• Uptime: ${hours}h ${minutes}m`,
             { parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
@@ -593,14 +615,7 @@ bot.on('callback_query', async (query) => {
                 return;
             }
             
-            const pending = getUserWithdrawals(userId, 'pending');
-            if (pending.length >= 3) {
-                await bot.sendMessage(chatId,
-                    `⚠️ You have ${pending.length} pending requests.`,
-                    { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
-                );
-                return;
-            }
+            // إزالة التحقق من الطلبات المعلقة لأننا نرسل للقناة مباشرة
             
             await bot.sendMessage(chatId,
                 `💸 *Withdrawal Request*\n\n` +
@@ -640,305 +655,7 @@ bot.on('callback_query', async (query) => {
                 `Users: ${stats.total_users}\n` +
                 `Verified: ${stats.verified}\n` +
                 `Twitter: ${stats.twitter_followers}\n` +
-                `Balance: ${formatRefi(stats.total_balance)}\n` +
-                `Pending: ${stats.pending_withdrawals}`,
-                { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
-            );
-        }
-        
-        // ===== ADMIN PENDING WITHDRAWALS (FIXED) =====
-        else if (data === 'admin_pending') {
-            await bot.answerCallbackQuery(query.id);
-            
-            if (!ADMIN_IDS.includes(Number(userId)) || !isAdminLoggedIn(userId)) {
-                await bot.answerCallbackQuery(query.id, { text: '⛔ Unauthorized', show_alert: true });
-                return;
-            }
-            
-            try {
-                const pending = getPendingWithdrawals();
-                console.log(`📋 Pending withdrawals: ${pending.length}`);
-                
-                if (pending.length === 0) {
-                    await bot.editMessageText(
-                        "✅ *No Pending Withdrawals*\n\nAll withdrawal requests have been processed.",
-                        { 
-                            chat_id: chatId, 
-                            message_id: msgId, 
-                            parse_mode: 'Markdown',
-                            reply_markup: adminInlineKeyboard() 
-                        }
-                    );
-                    return;
-                }
-                
-                let text = "💰 *Pending Withdrawals*\n\n";
-                const keyboard = { inline_keyboard: [] };
-                const displayCount = Math.min(pending.length, 5);
-                
-                for (let i = 0; i < displayCount; i++) {
-                    const w = pending[i];
-                    if (!w || !w.id) continue;
-                    
-                    const userData = db.users && db.users[w.user_id] 
-                        ? db.users[w.user_id] 
-                        : { first_name: 'Unknown', username: '' };
-                    
-                    const firstName = userData.first_name || 'Unknown';
-                    const username = userData.username ? `@${userData.username}` : 'No username';
-                    
-                    let amountText = 'Unknown';
-                    try {
-                        amountText = formatRefi(w.amount || 0);
-                    } catch (e) {
-                        amountText = `${w.amount || 0} REFi`;
-                    }
-                    
-                    const dateStr = w.created_at 
-                        ? new Date(w.created_at * 1000).toLocaleString() 
-                        : 'Unknown date';
-                    
-                    text += `🆔 *${w.id.slice(0, 8)}...*\n`;
-                    text += `👤 ${firstName} (${username})\n`;
-                    text += `💰 ${amountText}\n`;
-                    text += `📅 ${dateStr}\n\n`;
-                    
-                    keyboard.inline_keyboard.push([
-                        { text: `📋 Process ${w.id.slice(0, 8)}`, callback_data: `process_${w.id}` }
-                    ]);
-                }
-                
-                if (pending.length > displayCount) {
-                    text += `*... and ${pending.length - displayCount} more requests*\n\n`;
-                }
-                
-                keyboard.inline_keyboard.push([{ text: '🔙 Back to Admin', callback_data: 'admin_back' }]);
-                
-                await bot.editMessageText(
-                    text,
-                    { 
-                        chat_id: chatId, 
-                        message_id: msgId, 
-                        parse_mode: 'Markdown', 
-                        reply_markup: keyboard 
-                    }
-                );
-                
-            } catch (error) {
-                console.error('❌ Error in admin_pending:', error);
-                await bot.editMessageText(
-                    "❌ *Error Loading Withdrawals*\n\nPlease try again or check console.",
-                    { 
-                        chat_id: chatId, 
-                        message_id: msgId, 
-                        parse_mode: 'Markdown',
-                        reply_markup: adminInlineKeyboard() 
-                    }
-                );
-            }
-        }
-        
-        // ===== PROCESS WITHDRAWAL =====
-        else if (data.startsWith('process_')) {
-            await bot.answerCallbackQuery(query.id);
-            
-            if (!ADMIN_IDS.includes(Number(userId)) || !isAdminLoggedIn(userId)) {
-                await bot.answerCallbackQuery(query.id, { text: '⛔ Unauthorized', show_alert: true });
-                return;
-            }
-            
-            const rid = data.slice(8);
-            console.log(`🔍 Processing withdrawal ID: ${rid}`);
-            
-            const w = db.withdrawals[rid];
-            if (!w) {
-                await bot.answerCallbackQuery(query.id, { text: '❌ Withdrawal not found', show_alert: true });
-                bot.emit('callback_query', { ...query, data: 'admin_pending' });
-                return;
-            }
-            
-            const user = db.users[w.user_id] || { first_name: 'Unknown', username: '' };
-            
-            await bot.editMessageText(
-                `💰 *Withdrawal Details*\n\n` +
-                `📝 *Request ID:* \`${rid}\`\n` +
-                `👤 *User:* ${user.first_name} (@${user.username || 'None'})\n` +
-                `🆔 *User ID:* \`${w.user_id}\`\n` +
-                `💰 *Amount:* ${formatRefi(w.amount)}\n` +
-                `📮 *Wallet:* \`${w.wallet}\`\n` +
-                `📅 *Created:* ${new Date(w.created_at * 1000).toLocaleString()}`,
-                { 
-                    chat_id: chatId, 
-                    message_id: msgId, 
-                    parse_mode: 'Markdown', 
-                    reply_markup: {
-                        inline_keyboard: [
-                            [
-                                { text: '✅ Approve', callback_data: `approve_${rid}` },
-                                { text: '❌ Reject', callback_data: `reject_${rid}` }
-                            ],
-                            [{ text: '🔙 Back to list', callback_data: 'admin_pending' }]
-                        ]
-                    }
-                }
-            );
-        }
-        
-        // ===== APPROVE WITHDRAWAL =====
-        else if (data.startsWith('approve_')) {
-            await bot.answerCallbackQuery(query.id);
-            
-            if (!ADMIN_IDS.includes(Number(userId)) || !isAdminLoggedIn(userId)) {
-                await bot.answerCallbackQuery(query.id, { text: '⛔ Unauthorized', show_alert: true });
-                return;
-            }
-            
-            const rid = data.slice(7);
-            console.log(`✅ Approving withdrawal: ${rid}`);
-            
-            const w = db.withdrawals[rid];
-            if (!w) {
-                await bot.answerCallbackQuery(query.id, { text: '❌ Withdrawal not found', show_alert: true });
-                return;
-            }
-            
-            if (w.status !== 'pending') {
-                await bot.answerCallbackQuery(query.id, { text: '❌ Already processed', show_alert: true });
-                return;
-            }
-            
-            w.status = 'approved';
-            w.processed_at = Date.now() / 1000;
-            w.processed_by = userId;
-            saveDB();
-            
-            try {
-                await bot.sendMessage(Number(w.user_id),
-                    `✅ *Withdrawal Approved!*\n\n` +
-                    `Your withdrawal request has been approved.\n` +
-                    `Amount: ${formatRefi(w.amount)}\n` +
-                    `Wallet: \`${w.wallet}\``,
-                    { parse_mode: 'Markdown' }
-                );
-            } catch (e) {}
-            
-            try {
-                const user = db.users[w.user_id] || {};
-                const channelMsg = 
-                    `✅ *Withdrawal Approved*\n\n` +
-                    `👤 User: ${user.first_name || 'Unknown'} (@${user.username || 'None'})\n` +
-                    `🆔 ID: \`${w.user_id}\`\n` +
-                    `💰 Amount: ${formatRefi(w.amount)}\n` +
-                    `📮 Wallet: \`${w.wallet}\`\n` +
-                    `⏱️ Processed: ${new Date().toLocaleString()}`;
-                
-                await bot.sendMessage(PAYMENT_CHANNEL, channelMsg, { parse_mode: 'Markdown' });
-            } catch (e) {
-                console.log('❌ Failed to post to channel:', e.message);
-            }
-            
-            await bot.answerCallbackQuery(query.id, { text: '✅ Approved' });
-            
-            const pending = getPendingWithdrawals();
-            if (pending.length === 0) {
-                await bot.editMessageText(
-                    "✅ No pending withdrawals",
-                    { chat_id: chatId, message_id: msgId, reply_markup: adminInlineKeyboard() }
-                );
-            } else {
-                bot.emit('callback_query', { ...query, data: 'admin_pending' });
-            }
-        }
-        
-        // ===== REJECT WITHDRAWAL =====
-        else if (data.startsWith('reject_')) {
-            await bot.answerCallbackQuery(query.id);
-            
-            if (!ADMIN_IDS.includes(Number(userId)) || !isAdminLoggedIn(userId)) {
-                await bot.answerCallbackQuery(query.id, { text: '⛔ Unauthorized', show_alert: true });
-                return;
-            }
-            
-            const rid = data.slice(6);
-            console.log(`❌ Rejecting withdrawal: ${rid}`);
-            
-            const w = db.withdrawals[rid];
-            if (!w) {
-                await bot.answerCallbackQuery(query.id, { text: '❌ Withdrawal not found', show_alert: true });
-                return;
-            }
-            
-            if (w.status !== 'pending') {
-                await bot.answerCallbackQuery(query.id, { text: '❌ Already processed', show_alert: true });
-                return;
-            }
-            
-            const user = db.users[w.user_id];
-            if (user) {
-                user.balance = (user.balance || 0) + w.amount;
-            }
-            
-            w.status = 'rejected';
-            w.processed_at = Date.now() / 1000;
-            w.processed_by = userId;
-            saveDB();
-            
-            try {
-                await bot.sendMessage(Number(w.user_id),
-                    `❌ *Withdrawal Rejected*\n\n` +
-                    `Your withdrawal request has been rejected.\n` +
-                    `Amount returned: ${formatRefi(w.amount)}\n` +
-                    `Wallet: \`${w.wallet}\``,
-                    { parse_mode: 'Markdown' }
-                );
-            } catch (e) {}
-            
-            try {
-                const userData = db.users[w.user_id] || {};
-                const channelMsg = 
-                    `❌ *Withdrawal Rejected*\n\n` +
-                    `👤 User: ${userData.first_name || 'Unknown'} (@${userData.username || 'None'})\n` +
-                    `🆔 ID: \`${w.user_id}\`\n` +
-                    `💰 Amount: ${formatRefi(w.amount)}\n` +
-                    `📮 Wallet: \`${w.wallet}\`\n` +
-                    `⏱️ Processed: ${new Date().toLocaleString()}`;
-                
-                await bot.sendMessage(PAYMENT_CHANNEL, channelMsg, { parse_mode: 'Markdown' });
-            } catch (e) {
-                console.log('❌ Failed to post to channel:', e.message);
-            }
-            
-            await bot.answerCallbackQuery(query.id, { text: '❌ Rejected' });
-            
-            const pending = getPendingWithdrawals();
-            if (pending.length === 0) {
-                await bot.editMessageText(
-                    "✅ No pending withdrawals",
-                    { chat_id: chatId, message_id: msgId, reply_markup: adminInlineKeyboard() }
-                );
-            } else {
-                bot.emit('callback_query', { ...query, data: 'admin_pending' });
-            }
-        }
-        
-        // ===== ADMIN BACK =====
-        else if (data === 'admin_back') {
-            await bot.answerCallbackQuery(query.id);
-            
-            if (!ADMIN_IDS.includes(Number(userId)) || !isAdminLoggedIn(userId)) {
-                await bot.answerCallbackQuery(query.id, { text: '⛔ Unauthorized', show_alert: true });
-                return;
-            }
-            
-            const stats = getStats();
-            await bot.editMessageText(
-                `👑 *Admin Panel*\n\n` +
-                `📊 *Statistics*\n` +
-                `• Users: ${stats.total_users} (✅ ${stats.verified})\n` +
-                `• Twitter: ${stats.twitter_followers}\n` +
-                `• Balance: ${formatRefi(stats.total_balance)}\n` +
-                `• Pending: ${stats.pending_withdrawals}\n` +
-                `• Referrals: ${stats.total_referrals}`,
+                `Balance: ${formatRefi(stats.total_balance)}\n`,
                 { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
             );
         }
@@ -992,6 +709,27 @@ bot.on('callback_query', async (query) => {
             
             await bot.editMessageText(
                 text,
+                { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
+            );
+        }
+        
+        // ===== ADMIN BACK =====
+        else if (data === 'admin_back') {
+            await bot.answerCallbackQuery(query.id);
+            
+            if (!ADMIN_IDS.includes(Number(userId)) || !isAdminLoggedIn(userId)) {
+                await bot.answerCallbackQuery(query.id, { text: '⛔ Unauthorized', show_alert: true });
+                return;
+            }
+            
+            const stats = getStats();
+            await bot.editMessageText(
+                `👑 *Admin Panel*\n\n` +
+                `📊 *Statistics*\n` +
+                `• Users: ${stats.total_users} (✅ ${stats.verified})\n` +
+                `• Twitter: ${stats.twitter_followers}\n` +
+                `• Balance: ${formatRefi(stats.total_balance)}\n` +
+                `• Referrals: ${stats.total_referrals}`,
                 { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
             );
         }
@@ -1112,15 +850,6 @@ bot.on('message', async (msg) => {
                 return;
             }
             
-            const pending = getUserWithdrawals(userId, 'pending');
-            if (pending.length >= 3) {
-                await bot.sendMessage(chatId,
-                    `⚠️ You have ${pending.length} pending requests.`,
-                    { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
-                );
-                return;
-            }
-            
             await bot.sendMessage(chatId,
                 `💸 *Withdrawal Request*\n\n` +
                 `Balance: ${formatRefi(user.balance || 0)}\n` +
@@ -1155,7 +884,6 @@ bot.on('message', async (msg) => {
                 `• Twitter followers: ${stats.twitter_followers}\n` +
                 `• Balance: ${formatRefi(stats.total_balance)}\n` +
                 `• Withdrawn: ${formatRefi(stats.total_withdrawn)}\n` +
-                `• Pending withdrawals: ${stats.pending_withdrawals}\n` +
                 `• Total referrals: ${stats.total_referrals}\n` +
                 `• Uptime: ${hours}h ${minutes}m`,
                 { parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
@@ -1207,39 +935,26 @@ bot.on('message', async (msg) => {
                 return;
             }
             
-            const rid = createWithdrawal(userId, amount, user.wallet);
-            const newBalance = (user.balance || 0) - amount;
-            const newWithdrawn = (user.total_withdrawn || 0) + amount;
-            updateUser(userId, { 
-                balance: newBalance, 
-                total_withdrawn: newWithdrawn,
-                pending_state: null 
-            });
-            db.stats.total_withdrawn = (db.stats.total_withdrawn || 0) + amount;
-            saveDB();
+            // استدعاء دالة طلب السحب الجديدة التي ترسل للقناة
+            const success = await requestWithdrawal(userId, amount, user.wallet);
             
-            const channelMsg = 
-                `💰 *New Withdrawal Request*\n\n` +
-                `👤 User: ${user.first_name || 'Unknown'} (@${user.username || 'None'})\n` +
-                `🆔 ID: \`${userId}\`\n` +
-                `📊 Referrals: ${user.referrals_count || 0}\n` +
-                `💵 Amount: ${formatRefi(amount)}\n` +
-                `📮 Wallet: \`${user.wallet}\`\n` +
-                `🆔 Request ID: \`${rid}\``;
-            
-            try {
-                await bot.sendMessage(PAYMENT_CHANNEL, channelMsg, { parse_mode: 'Markdown' });
-                console.log(`📢 Posted to channel: ${PAYMENT_CHANNEL}`);
-            } catch (e) {
-                console.log('❌ Failed to post to channel:', e.message);
+            if (success) {
+                await bot.sendMessage(chatId,
+                    `✅ *Withdrawal Request Submitted!*\n\n` +
+                    `Your request has been sent to the admins.\n` +
+                    `You will be notified once processed.`,
+                    { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+                );
+                
+                console.log(`💰 Withdrawal: ${userId} requested ${amount} REFi (sent to channel)`);
+            } else {
+                // إذا فشل الإرسال للقناة، نبلغ المستخدم
+                await bot.sendMessage(chatId,
+                    `❌ *Error*\n\n` +
+                    `Could not process your request. Please try again later or contact support.`,
+                    { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+                );
             }
-            
-            await bot.sendMessage(chatId,
-                `✅ *Withdrawal Request Submitted!*\n\nRequest ID: \`${rid.slice(0, 8)}...\``,
-                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
-            );
-            
-            console.log(`💰 Withdrawal: ${userId} requested ${amount} REFi`);
         }
         
         else if (user.pending_state === 'admin_login') {
@@ -1265,7 +980,6 @@ bot.on('message', async (msg) => {
                     `• Twitter followers: ${stats.twitter_followers}\n` +
                     `• Balance: ${formatRefi(stats.total_balance)}\n` +
                     `• Withdrawn: ${formatRefi(stats.total_withdrawn)}\n` +
-                    `• Pending: ${stats.pending_withdrawals}\n` +
                     `• Uptime: ${hours}h ${minutes}m`,
                     { parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
                 );
@@ -1331,7 +1045,6 @@ app.get('/', (req, res) => {
                 <div class="status">🟢 RUNNING</div>
                 <p>@${botUsername}</p>
                 <p>Users: ${stats.total_users} | Verified: ${stats.verified}</p>
-                <p>Pending: ${stats.pending_withdrawals}</p>
                 <p>${new Date().toLocaleString()}</p>
             </body>
         </html>
@@ -1349,8 +1062,7 @@ app.get('/status', (req, res) => {
         time: new Date().toISOString(),
         stats: {
             users: stats.total_users,
-            verified: stats.verified,
-            pending: stats.pending_withdrawals
+            verified: stats.verified
         }
     });
 });
