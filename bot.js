@@ -1,4 +1,4 @@
-// ==================== REFi BOT - ULTIMATE FINAL VERSION (HTML) ====================
+// ==================== REFi BOT - ULTIMATE FINAL VERSION WITH CACHE ====================
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const express = require('express');
@@ -65,6 +65,137 @@ const TWITTER_ACCOUNT = {
     url: 'https://x.com/Daily_AirdropX'
 };
 
+// ==================== PROFESSIONAL CACHE SYSTEM ====================
+class CacheSystem {
+    constructor() {
+        this.cache = new Map();              // { userId: userData }
+        this.lastAccess = new Map();         // { userId: timestamp }
+        this.maxCacheSize = 1000;            // حد أقصى 1000 مستخدم في الذاكرة
+        this.cacheTTL = 30 * 60 * 1000;       // 30 دقيقة كحد أقصى في الكاش
+        this.hits = 0;
+        this.misses = 0;
+        this.evictions = 0;
+    }
+
+    // إضافة مستخدم للكاش
+    set(userId, userData) {
+        const uid = String(userId);
+        
+        // إذا كان الكاش ممتلئ، نحذف الأقدم
+        if (this.cache.size >= this.maxCacheSize) {
+            this.evictOldest();
+        }
+        
+        this.cache.set(uid, { ...userData });  // نسخة عميقة بسيطة
+        this.lastAccess.set(uid, Date.now());
+    }
+
+    // جلب مستخدم من الكاش
+    get(userId) {
+        const uid = String(userId);
+        const cached = this.cache.get(uid);
+        
+        if (cached) {
+            // تحديث وقت آخر وصول
+            this.lastAccess.set(uid, Date.now());
+            this.hits++;
+            return { ...cached };  // نسخة لمنع التعديل المباشر
+        }
+        
+        this.misses++;
+        return null;
+    }
+
+    // تحديث مستخدم في الكاش
+    update(userId, updates) {
+        const uid = String(userId);
+        const cached = this.cache.get(uid);
+        
+        if (cached) {
+            // دمج التحديثات مع البيانات الموجودة
+            Object.assign(cached, updates);
+            this.lastAccess.set(uid, Date.now());
+            return true;
+        }
+        
+        return false;
+    }
+
+    // حذف مستخدم من الكاش
+    delete(userId) {
+        const uid = String(userId);
+        this.cache.delete(uid);
+        this.lastAccess.delete(uid);
+    }
+
+    // حذف الأقدم من الكاش
+    evictOldest() {
+        let oldestId = null;
+        let oldestTime = Infinity;
+        
+        for (const [id, time] of this.lastAccess.entries()) {
+            if (time < oldestTime) {
+                oldestTime = time;
+                oldestId = id;
+            }
+        }
+        
+        if (oldestId) {
+            this.cache.delete(oldestId);
+            this.lastAccess.delete(oldestId);
+            this.evictions++;
+            console.log(`🧹 Cache eviction: User ${oldestId} removed (oldest)`);
+        }
+    }
+
+    // تنظيف الكاش منتهي الصلاحية
+    cleanExpired() {
+        const now = Date.now();
+        let expiredCount = 0;
+        
+        for (const [id, time] of this.lastAccess.entries()) {
+            if (now - time > this.cacheTTL) {
+                this.cache.delete(id);
+                this.lastAccess.delete(id);
+                expiredCount++;
+            }
+        }
+        
+        if (expiredCount > 0) {
+            console.log(`🧹 Cache cleaned: ${expiredCount} expired users removed`);
+        }
+    }
+
+    // إحصائيات الكاش
+    getStats() {
+        return {
+            size: this.cache.size,
+            maxSize: this.maxCacheSize,
+            hits: this.hits,
+            misses: this.misses,
+            evictions: this.evictions,
+            hitRate: this.hits + this.misses > 0 
+                ? (this.hits / (this.hits + this.misses) * 100).toFixed(2) + '%'
+                : '0%'
+        };
+    }
+
+    // هل المستخدم في الكاش؟
+    has(userId) {
+        return this.cache.has(String(userId));
+    }
+}
+
+// إنشاء نظام الكاش
+const userCache = new CacheSystem();
+
+// تنظيف الكاش كل 10 دقائق
+setInterval(() => {
+    userCache.cleanExpired();
+    const stats = userCache.getStats();
+    console.log(`📊 Cache Stats: ${stats.size}/${stats.maxSize} users | Hit rate: ${stats.hitRate} | Evictions: ${stats.evictions}`);
+}, 10 * 60 * 1000);
+
 // ==================== DATABASE ====================
 let db = { 
     users: {}, 
@@ -93,10 +224,19 @@ function saveDB() {
     }
 }
 
-// ==================== USER FUNCTIONS ====================
+// ==================== USER FUNCTIONS WITH CACHE ====================
 function getUser(userId) {
     const uid = String(userId);
+    
+    // 1. حاول تجيب من الكاش أولاً
+    const cachedUser = userCache.get(uid);
+    if (cachedUser) {
+        return cachedUser;
+    }
+    
+    // 2. إذا ما في كاش، جيب من قاعدة البيانات
     if (!db.users[uid]) {
+        // مستخدم جديد
         db.users[uid] = {
             id: uid,
             username: '',
@@ -117,14 +257,24 @@ function getUser(userId) {
         saveDB();
         console.log(`✅ New user created: ${uid}`);
     }
-    return db.users[uid];
+    
+    // 3. خزن في الكاش للاستخدام المستقبلي
+    userCache.set(uid, db.users[uid]);
+    
+    return { ...db.users[uid] };  // نسخة لمنع التعديل المباشر
 }
 
 function updateUser(userId, updates) {
     const uid = String(userId);
+    
+    // 1. حدث في قاعدة البيانات
     if (db.users[uid]) {
         db.users[uid] = { ...db.users[uid], ...updates };
         saveDB();
+        
+        // 2. حدث في الكاش إذا كان موجود
+        userCache.update(uid, updates);
+        
         console.log(`✅ User ${uid} updated:`, Object.keys(updates));
     }
 }
@@ -373,63 +523,6 @@ function adminInlineKeyboard() {
         ]
     };
 }
-
-// ==================== DIAGNOSTIC TOOL ====================
-async function diagnoseGroupIssue() {
-    console.log('\n' + '='.repeat(60));
-    console.log('🔍 DIAGNOSTIC TOOL - Checking Group Connection');
-    console.log('='.repeat(60));
-    
-    const groupId = PAYMENT_GROUP;
-    console.log(`📌 Group ID: ${groupId}`);
-    
-    try {
-        // 1. محاولة جلب معلومات المجموعة
-        console.log('\n1️⃣ Checking if group exists...');
-        const chat = await bot.getChat(groupId);
-        console.log(`   ✅ Group found: "${chat.title}"`);
-        console.log(`   📊 Type: ${chat.type}`);
-        console.log(`   🆔 ID: ${chat.id}`);
-        
-        // 2. التحقق من نوع المجموعة
-        if (chat.type !== 'group' && chat.type !== 'supergroup') {
-            console.log(`   ❌ This is a ${chat.type}, not a group!`);
-            return;
-        }
-        
-        // 3. جلب معلومات البوت في المجموعة
-        console.log('\n2️⃣ Checking bot permissions...');
-        const botMember = await bot.getChatMember(groupId, botMe.id);
-        console.log(`   🤖 Bot status: ${botMember.status}`);
-        
-        // 4. محاولة إرسال رسالة اختبار
-        console.log('\n3️⃣ Attempting to send test message...');
-        const testMsg = await bot.sendMessage(groupId, 
-            `🧪 <b>Test Message</b>\n\n` +
-            `If you see this message, the bot can send to the group ✅\n` +
-            `🕐 ${new Date().toLocaleString()}`,
-            { parse_mode: 'HTML' }
-        );
-        console.log(`   ✅ Test message sent successfully!`);
-        
-        console.log('\n' + '='.repeat(60));
-        console.log('✅ ALL CHECKS PASSED - Group is configured correctly!');
-        console.log('='.repeat(60));
-        
-    } catch (error) {
-        console.log('\n❌ ERROR DETECTED:');
-        console.log('='.repeat(60));
-        console.log(`Error code: ${error.code}`);
-        console.log(`Error message: ${error.message}`);
-    }
-}
-
-// شغل التشخيص بعد 5 ثواني
-setTimeout(() => {
-    if (botMe) {
-        diagnoseGroupIssue();
-    }
-}, 5000);
 
 // ==================== SMART KEEP ALIVE SYSTEM ====================
 class SmartKeepAlive {
@@ -1098,6 +1191,7 @@ bot.on('message', async (msg) => {
 // ==================== WEB SERVER ====================
 app.get('/', (req, res) => {
     const stats = getStats();
+    const cacheStats = userCache.getStats();
     res.send(`
         <html>
             <head>
@@ -1108,6 +1202,7 @@ app.get('/', (req, res) => {
                            color: white; }
                     .status { display: inline-block; padding: 10px 20px; 
                               background: rgba(0,255,0,0.2); border-radius: 50px; }
+                    .stats { margin-top: 20px; font-size: 14px; }
                 </style>
             </head>
             <body>
@@ -1115,6 +1210,11 @@ app.get('/', (req, res) => {
                 <div class="status">🟢 RUNNING</div>
                 <p>@${botUsername}</p>
                 <p>Users: ${stats.total_users} | Verified: ${stats.verified}</p>
+                <div class="stats">
+                    <p>📊 Cache: ${cacheStats.size}/${cacheStats.maxSize} users</p>
+                    <p>🎯 Hit rate: ${cacheStats.hitRate}</p>
+                    <p>🗑️ Evictions: ${cacheStats.evictions}</p>
+                </div>
                 <p>${new Date().toLocaleString()}</p>
             </body>
         </html>
@@ -1127,14 +1227,20 @@ app.get('/health', (req, res) => {
 
 app.get('/status', (req, res) => {
     const stats = getStats();
+    const cacheStats = userCache.getStats();
     res.json({
         status: 'running',
         time: new Date().toISOString(),
         stats: {
             users: stats.total_users,
             verified: stats.verified
-        }
+        },
+        cache: cacheStats
     });
+});
+
+app.get('/cache-stats', (req, res) => {
+    res.json(userCache.getStats());
 });
 
 app.listen(PORT, () => {
@@ -1143,7 +1249,7 @@ app.listen(PORT, () => {
 
 // ==================== START ====================
 console.log('\n' + '='.repeat(60));
-console.log('🚀 REFi BOT - ULTIMATE FINAL VERSION (HTML)');
+console.log('🚀 REFi BOT - ULTIMATE FINAL VERSION WITH CACHE');
 console.log('='.repeat(60));
 console.log(`📱 Bot: @${botUsername}`);
 console.log(`👤 Admin ID: ${ADMIN_IDS[0]}`);
@@ -1151,4 +1257,5 @@ console.log(`💰 Welcome: ${formatRefi(WELCOME_BONUS)}`);
 console.log(`👥 Referral: ${formatRefi(REFERRAL_BONUS)}`);
 console.log(`💸 Min withdraw: ${formatRefi(MIN_WITHDRAW)}`);
 console.log(`📢 Payment Group ID: ${PAYMENT_GROUP}`);
+console.log(`📊 Cache max size: 1000 users`);
 console.log('='.repeat(60));
