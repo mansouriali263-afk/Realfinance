@@ -7,9 +7,8 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 
 // ==================== CONFIG ====================
-const token = '7823073143:AAGdGquDK2Ee-wOp5bGzS6dx2y92wRBOVJw';
+const token = process.env.BOT_TOKEN;  // هذا السطر فقط
 const botUsername = 'RealnetworkPaybot';
-
 // متغير لتخزين معلومات البوت
 let botMe = null;
 
