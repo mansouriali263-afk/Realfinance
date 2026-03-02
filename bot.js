@@ -177,22 +177,28 @@ function isValidWallet(wallet) {
     return wallet && wallet.startsWith('0x') && wallet.length === 42;
 }
 
-// ==================== BOTTOM NAVIGATION KEYBOARDS ====================
+// ==================== KEYBOARDS ====================
 function channelsKeyboard() {
-    // Floating buttons for channels (before verification)
+    // أزرار القنوات المنبثقة (قبل التحقق)
     const keyboard = [];
     REQUIRED_CHANNELS.forEach(ch => {
-        keyboard.push([{ text: `📢 Join ${ch.name}`, url: `https://t.me/${ch.username.substring(1)}` }]);
+        keyboard.push([{ 
+            text: `📢 Join ${ch.name}`, 
+            url: `https://t.me/${ch.username.substring(1)}` 
+        }]);
     });
-    keyboard.push([{ text: '✅ VERIFY MEMBERSHIP', callback_data: 'verify' }]);
+    keyboard.push([{ 
+        text: '✅ VERIFY MEMBERSHIP', 
+        callback_data: 'verify' 
+    }]);
     return { inline_keyboard: keyboard };
 }
 
 function bottomNavigation(userId) {
-    // Bottom navigation menu (always at the bottom)
+    // شريط التنقل السفلي (بعد التحقق)
     const user = db.users[String(userId)] || {};
     
-    // Always show these 4 buttons in a 2x2 grid
+    // صفان من الأزرار في الأسفل (2x2)
     const keyboard = [
         [
             { text: '💰 Balance', callback_data: 'bal' },
@@ -204,7 +210,7 @@ function bottomNavigation(userId) {
         ]
     ];
     
-    // Add wallet setup if no wallet, or admin button if admin
+    // صف إضافي حسب حالة المستخدم
     const bottomRow = [];
     if (!user.wallet) {
         bottomRow.push({ text: '👛 Set Wallet', callback_data: 'wallet' });
@@ -313,7 +319,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
         return;
     }
     
-    // Check channels
+    // التحقق من القنوات
     const { allJoined, notJoined } = await checkChannels(userId);
     
     if (allJoined) {
@@ -358,11 +364,12 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
             { parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
         );
     } else {
+        // ===== هذه هي الرسالة المنبثقة الأولى مع أزرار القنوات =====
         await bot.sendMessage(chatId, 
             `🎉 *Welcome to REFi Bot!*\n\n` +
-            `💰 Welcome: ${formatRefi(WELCOME_BONUS)}\n` +
-            `👥 Referral: ${formatRefi(REFERRAL_BONUS)} per friend\n\n` +
-            `📢 To start, join these channels:`,
+            `💰 *Welcome Bonus:* ${formatRefi(WELCOME_BONUS)}\n` +
+            `👥 *Referral Bonus:* ${formatRefi(REFERRAL_BONUS)} per friend\n\n` +
+            `📢 *To start, you must join these channels first:*`,
             { parse_mode: 'Markdown', reply_markup: channelsKeyboard() }
         );
     }
@@ -430,7 +437,7 @@ bot.on('callback_query', async (query) => {
             }
         } else {
             await bot.editMessageText(
-                `❌ *Not joined:*\n${notJoined.join('\n')}`,
+                `❌ *You haven't joined these channels:*\n${notJoined.join('\n')}`,
                 {
                     chat_id: chatId,
                     message_id: msgId,
@@ -700,7 +707,6 @@ bot.on('callback_query', async (query) => {
                 {
                     chat_id: chatId,
                     message_id: msgId,
-                    parse_mode: 'Markdown',
                     reply_markup: adminKeyboard()
                 }
             );
