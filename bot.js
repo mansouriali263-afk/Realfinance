@@ -1,4 +1,4 @@
-// ==================== REFi BOT - COMPLETE JAVASCRIPT VERSION ====================
+// ==================== REFi BOT - BOTTOM NAVIGATION VERSION ====================
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const express = require('express');
@@ -26,7 +26,16 @@ const REQUIRED_CHANNELS = [
 ];
 
 // ==================== DATABASE ====================
-let db = { users: {}, withdrawals: {}, admin_sessions: {}, stats: { total_users: 0, total_withdrawn: 0, start_time: Date.now() / 1000 } };
+let db = { 
+    users: {}, 
+    withdrawals: {}, 
+    admin_sessions: {}, 
+    stats: { 
+        total_users: 0, 
+        total_withdrawn: 0, 
+        start_time: Date.now() / 1000 
+    } 
+};
 
 try {
     db = JSON.parse(fs.readFileSync('bot_data.json'));
@@ -55,7 +64,8 @@ function getUser(userId) {
             referrals_count: 0,
             referral_clicks: 0,
             verified: false,
-            wallet: null
+            wallet: null,
+            pending_state: null
         };
         db.stats.total_users = Object.keys(db.users).length;
         saveDB();
@@ -167,8 +177,9 @@ function isValidWallet(wallet) {
     return wallet && wallet.startsWith('0x') && wallet.length === 42;
 }
 
-// ==================== KEYBOARDS ====================
+// ==================== BOTTOM NAVIGATION KEYBOARDS ====================
 function channelsKeyboard() {
+    // Floating buttons for channels (before verification)
     const keyboard = [];
     REQUIRED_CHANNELS.forEach(ch => {
         keyboard.push([{ text: `📢 Join ${ch.name}`, url: `https://t.me/${ch.username.substring(1)}` }]);
@@ -177,32 +188,42 @@ function channelsKeyboard() {
     return { inline_keyboard: keyboard };
 }
 
-function mainKeyboard(userId) {
+function bottomNavigation(userId) {
+    // Bottom navigation menu (always at the bottom)
     const user = db.users[String(userId)] || {};
+    
+    // Always show these 4 buttons in a 2x2 grid
     const keyboard = [
-        [{ text: '💰 Balance', callback_data: 'bal' }],
-        [{ text: '🔗 Referral', callback_data: 'ref' }],
-        [{ text: '📊 Statistics', callback_data: 'stats' }]
+        [
+            { text: '💰 Balance', callback_data: 'bal' },
+            { text: '🔗 Referral', callback_data: 'ref' }
+        ],
+        [
+            { text: '📊 Stats', callback_data: 'stats' },
+            { text: '💸 Withdraw', callback_data: 'wd' }
+        ]
     ];
     
-    if (user.wallet) {
-        keyboard.push([{ text: '💸 Withdraw', callback_data: 'wd' }]);
-    } else {
-        keyboard.push([{ text: '👛 Set Wallet', callback_data: 'wallet' }]);
+    // Add wallet setup if no wallet, or admin button if admin
+    const bottomRow = [];
+    if (!user.wallet) {
+        bottomRow.push({ text: '👛 Set Wallet', callback_data: 'wallet' });
     }
-    
     if (ADMIN_IDS.includes(Number(userId)) && isAdminLoggedIn(Number(userId))) {
-        keyboard.push([{ text: '👑 Admin Panel', callback_data: 'admin' }]);
+        bottomRow.push({ text: '👑 Admin', callback_data: 'admin' });
+    }
+    if (bottomRow.length > 0) {
+        keyboard.push(bottomRow);
     }
     
     return { inline_keyboard: keyboard };
 }
 
-function backKeyboard() {
+function backButton() {
     return { inline_keyboard: [[{ text: '🔙 Back to Menu', callback_data: 'back' }]] };
 }
 
-function cancelKeyboard() {
+function cancelButton() {
     return { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'back' }]] };
 }
 
@@ -246,9 +267,6 @@ async function checkChannels(userId) {
 }
 
 // ==================== HANDLERS ====================
-// Track user states
-const userStates = {};
-
 // /start command
 bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     const chatId = msg.chat.id;
@@ -258,7 +276,6 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     const referrerId = match[1] ? parseInt(match[1]) : null;
     
     console.log(`\n▶️ START: User ${userId}`);
-    console.log(`📝 Message: ${msg.text}`);
     
     // Get or create user
     let user = getUser(userId);
@@ -290,8 +307,8 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     // Check if already verified
     if (user.verified) {
         await bot.sendMessage(chatId, 
-            `🎯 *Welcome back!*\n💰 Balance: ${formatRefi(user.balance)}`,
-            { parse_mode: 'Markdown', reply_markup: mainKeyboard(userId) }
+            `🎯 *Welcome Back!*\n\n💰 Balance: ${formatRefi(user.balance)}`,
+            { parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
         );
         return;
     }
@@ -308,7 +325,6 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
             total_earned: user.total_earned + WELCOME_BONUS 
         });
         console.log(`✅ Welcome bonus added: ${WELCOME_BONUS}`);
-        console.log(`Balance: ${user.balance} -> ${newBalance}`);
         
         // Process referral
         if (user.referred_by) {
@@ -339,14 +355,14 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
             `✅ *Verification Successful!*\n\n` +
             `✨ Added ${formatRefi(WELCOME_BONUS)} to your balance\n` +
             `💰 Current balance: ${formatRefi(newBalance)}`,
-            { parse_mode: 'Markdown', reply_markup: mainKeyboard(userId) }
+            { parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
         );
     } else {
         await bot.sendMessage(chatId, 
             `🎉 *Welcome to REFi Bot!*\n\n` +
             `💰 Welcome: ${formatRefi(WELCOME_BONUS)}\n` +
             `👥 Referral: ${formatRefi(REFERRAL_BONUS)} per friend\n\n` +
-            `📢 Join the channels below and click VERIFY:`,
+            `📢 To start, join these channels:`,
             { parse_mode: 'Markdown', reply_markup: channelsKeyboard() }
         );
     }
@@ -401,18 +417,20 @@ bot.on('callback_query', async (query) => {
                 }
                 
                 await bot.editMessageText(
-                    `✅ *Verification Successful!*\n\n✨ Added ${formatRefi(WELCOME_BONUS)}\n💰 Current balance: ${formatRefi(newBalance)}`,
+                    `✅ *Verification Successful!*\n\n` +
+                    `✨ Added ${formatRefi(WELCOME_BONUS)}\n` +
+                    `💰 Current balance: ${formatRefi(newBalance)}`,
                     {
                         chat_id: chatId,
                         message_id: msgId,
                         parse_mode: 'Markdown',
-                        reply_markup: mainKeyboard(userId)
+                        reply_markup: bottomNavigation(userId)
                     }
                 );
             }
         } else {
             await bot.editMessageText(
-                `❌ *You haven't joined these channels:*\n${notJoined.join('\n')}`,
+                `❌ *Not joined:*\n${notJoined.join('\n')}`,
                 {
                     chat_id: chatId,
                     message_id: msgId,
@@ -436,7 +454,7 @@ bot.on('callback_query', async (query) => {
                 chat_id: chatId,
                 message_id: msgId,
                 parse_mode: 'Markdown',
-                reply_markup: backKeyboard()
+                reply_markup: backButton()
             }
         );
     }
@@ -448,7 +466,8 @@ bot.on('callback_query', async (query) => {
         const earned = (user.referrals_count || 0) * REFERRAL_BONUS;
         
         await bot.editMessageText(
-            `🔗 *Your Referral Link*\n\n\`${link}\`\n\n` +
+            `🔗 *Your Referral Link*\n\n` +
+            `\`${link}\`\n\n` +
             `• Link clicks: ${user.referral_clicks || 0}\n` +
             `• Successful referrals: ${user.referrals_count || 0}\n` +
             `• Earnings from referrals: ${formatRefi(earned)}`,
@@ -456,15 +475,15 @@ bot.on('callback_query', async (query) => {
                 chat_id: chatId,
                 message_id: msgId,
                 parse_mode: 'Markdown',
-                reply_markup: backKeyboard()
+                reply_markup: backButton()
             }
         );
     }
     
-    // ===== STATISTICS =====
+    // ===== STATS =====
     else if (data === 'stats') {
         const user = db.users[String(userId)];
-        const joined = new Date(user.joined_at * 1000).toISOString().split('T')[0];
+        const joined = new Date(user.joined_at * 1000).toLocaleDateString();
         
         await bot.editMessageText(
             `📊 *Your Statistics*\n\n` +
@@ -474,12 +493,13 @@ bot.on('callback_query', async (query) => {
             `• Total earned: ${formatRefi(user.total_earned)}\n` +
             `• Referrals: ${user.referrals_count || 0}\n` +
             `• Link clicks: ${user.referral_clicks || 0}\n` +
-            `• Verified: ${user.verified ? '✅' : '❌'}`,
+            `• Verified: ${user.verified ? '✅' : '❌'}\n` +
+            `• Wallet: ${user.wallet ? shortWallet(user.wallet) : 'Not set'}`,
             {
                 chat_id: chatId,
                 message_id: msgId,
                 parse_mode: 'Markdown',
-                reply_markup: backKeyboard()
+                reply_markup: backButton()
             }
         );
     }
@@ -492,7 +512,7 @@ bot.on('callback_query', async (query) => {
         await bot.editMessageText(
             `👛 *Set Withdrawal Wallet*\n\n` +
             `Current wallet: ${current}\n\n` +
-            `Please send your Ethereum wallet address.\n` +
+            `Please send your BEP20 wallet address.\n` +
             `It must start with \`0x\` and be 42 characters long.\n\n` +
             `Example:\n` +
             `\`0x742d35Cc6634C0532925a3b844Bc454e4438f44e\``,
@@ -500,10 +520,10 @@ bot.on('callback_query', async (query) => {
                 chat_id: chatId,
                 message_id: msgId,
                 parse_mode: 'Markdown',
-                reply_markup: cancelKeyboard()
+                reply_markup: cancelButton()
             }
         );
-        userStates[userId] = 'waiting_wallet';
+        updateUser(userId, { pending_state: 'waiting_wallet' });
     }
     
     // ===== WITHDRAW =====
@@ -512,11 +532,12 @@ bot.on('callback_query', async (query) => {
         
         if (!user.verified) {
             await bot.editMessageText(
-                "❌ Please verify first by joining the channels!",
+                "❌ *Please verify first!*\n\nYou need to join the channels and verify your membership.",
                 {
                     chat_id: chatId,
                     message_id: msgId,
-                    reply_markup: backKeyboard()
+                    parse_mode: 'Markdown',
+                    reply_markup: backButton()
                 }
             );
             return;
@@ -524,11 +545,12 @@ bot.on('callback_query', async (query) => {
         
         if (!user.wallet) {
             await bot.editMessageText(
-                "⚠️ You need to set a wallet first!",
+                "⚠️ *Wallet Required*\n\nYou need to set a wallet address first.\nPlease use the 👛 Set Wallet button.",
                 {
                     chat_id: chatId,
                     message_id: msgId,
-                    reply_markup: mainKeyboard(userId)
+                    parse_mode: 'Markdown',
+                    reply_markup: bottomNavigation(userId)
                 }
             );
             return;
@@ -538,27 +560,33 @@ bot.on('callback_query', async (query) => {
             const needed = MIN_WITHDRAW - user.balance;
             await bot.editMessageText(
                 `⚠️ *Insufficient Balance*\n\n` +
-                `Minimum withdrawal: ${formatRefi(MIN_WITHDRAW)}\n` +
-                `Your balance: ${formatRefi(user.balance)}\n\n` +
-                `You need ${formatRefi(needed)} more to withdraw.`,
+                `• Minimum withdrawal: ${formatRefi(MIN_WITHDRAW)}\n` +
+                `• Your balance: ${formatRefi(user.balance)}\n\n` +
+                `You need **${formatRefi(needed)}** more to withdraw.\n\n` +
+                `💡 Invite more friends to earn more REFi!`,
                 {
                     chat_id: chatId,
                     message_id: msgId,
                     parse_mode: 'Markdown',
-                    reply_markup: backKeyboard()
+                    reply_markup: bottomNavigation(userId)
                 }
             );
             return;
         }
         
+        // Check pending withdrawals
         const pending = getUserWithdrawals(userId, 'pending');
         if (pending.length >= 3) {
             await bot.editMessageText(
-                `⚠️ You have ${pending.length} pending withdrawals. Max allowed is 3.`,
+                `⚠️ *Pending Withdrawals Limit*\n\n` +
+                `You already have ${pending.length} pending withdrawal requests.\n` +
+                `Maximum allowed is 3.\n\n` +
+                `Please wait for them to be processed before requesting more.`,
                 {
                     chat_id: chatId,
                     message_id: msgId,
-                    reply_markup: backKeyboard()
+                    parse_mode: 'Markdown',
+                    reply_markup: bottomNavigation(userId)
                 }
             );
             return;
@@ -566,18 +594,18 @@ bot.on('callback_query', async (query) => {
         
         await bot.editMessageText(
             `💸 *Withdrawal Request*\n\n` +
-            `Your balance: ${formatRefi(user.balance)}\n` +
-            `Minimum withdrawal: ${formatRefi(MIN_WITHDRAW)}\n` +
-            `Your wallet: ${shortWallet(user.wallet)}\n\n` +
+            `• Your balance: ${formatRefi(user.balance)}\n` +
+            `• Minimum withdrawal: ${formatRefi(MIN_WITHDRAW)}\n` +
+            `• Your wallet: \`${shortWallet(user.wallet)}\`\n\n` +
             `📝 *Please enter the amount you want to withdraw:*`,
             {
                 chat_id: chatId,
                 message_id: msgId,
                 parse_mode: 'Markdown',
-                reply_markup: cancelKeyboard()
+                reply_markup: cancelButton()
             }
         );
-        userStates[userId] = 'waiting_amount';
+        updateUser(userId, { pending_state: 'waiting_amount' });
     }
     
     // ===== BACK =====
@@ -589,10 +617,10 @@ bot.on('callback_query', async (query) => {
                 chat_id: chatId,
                 message_id: msgId,
                 parse_mode: 'Markdown',
-                reply_markup: mainKeyboard(userId)
+                reply_markup: bottomNavigation(userId)
             }
         );
-        delete userStates[userId];
+        updateUser(userId, { pending_state: null });
     }
     
     // ===== ADMIN =====
@@ -606,10 +634,10 @@ bot.on('callback_query', async (query) => {
                     chat_id: chatId,
                     message_id: msgId,
                     parse_mode: 'Markdown',
-                    reply_markup: backKeyboard()
+                    reply_markup: backButton()
                 }
             );
-            userStates[userId] = 'admin_login';
+            updateUser(userId, { pending_state: 'admin_login' });
             return;
         }
         
@@ -621,8 +649,8 @@ bot.on('callback_query', async (query) => {
             `👑 *Admin Panel*\n\n` +
             `📊 *Statistics*\n` +
             `• Users: ${stats.total_users} (✅ ${stats.verified})\n` +
-            `• Balance: ${formatRefi(stats.total_balance)}\n` +
-            `• Withdrawn: ${formatRefi(stats.total_withdrawn)}\n` +
+            `• Total balance: ${formatRefi(stats.total_balance)}\n` +
+            `• Total withdrawn: ${formatRefi(stats.total_withdrawn)}\n` +
             `• Pending withdrawals: ${stats.pending_withdrawals}\n` +
             `• Total referrals: ${stats.total_referrals}\n` +
             `• Uptime: ${hours}h ${minutes}m`,
@@ -672,6 +700,7 @@ bot.on('callback_query', async (query) => {
                 {
                     chat_id: chatId,
                     message_id: msgId,
+                    parse_mode: 'Markdown',
                     reply_markup: adminKeyboard()
                 }
             );
@@ -682,9 +711,9 @@ bot.on('callback_query', async (query) => {
         const keyboard = { inline_keyboard: [] };
         
         pending.slice(0, 5).forEach(w => {
-            const user = db.users[w.user_id] || { first_name: 'Unknown' };
+            const user = db.users[w.user_id] || { first_name: 'Unknown', username: '' };
             text += `🆔 \`${w.id.slice(0, 8)}...\`\n`;
-            text += `👤 ${user.first_name}\n`;
+            text += `👤 ${user.first_name} (@${user.username || 'None'})\n`;
             text += `💰 ${formatRefi(w.amount)}\n`;
             text += `📅 ${new Date(w.created_at * 1000).toLocaleString()}\n\n`;
             
@@ -742,7 +771,9 @@ bot.on('callback_query', async (query) => {
             if (w) {
                 try {
                     await bot.sendMessage(Number(w.user_id),
-                        `✅ *Withdrawal Approved!*\n\nRequest: \`${rid.slice(0, 8)}...\`\nAmount: ${formatRefi(w.amount)}`
+                        `✅ *Withdrawal Approved!*\n\n` +
+                        `Request: \`${rid.slice(0, 8)}...\`\n` +
+                        `Amount: ${formatRefi(w.amount)}`
                     );
                 } catch (e) {}
             }
@@ -759,7 +790,6 @@ bot.on('callback_query', async (query) => {
                 }
             );
         } else {
-            // Re-run admin_pending
             bot.emit('callback_query', { 
                 ...query, 
                 data: 'admin_pending' 
@@ -775,7 +805,9 @@ bot.on('callback_query', async (query) => {
             if (w) {
                 try {
                     await bot.sendMessage(Number(w.user_id),
-                        `❌ *Withdrawal Rejected*\n\nRequest: \`${rid.slice(0, 8)}...\`\nAmount returned: ${formatRefi(w.amount)}`
+                        `❌ *Withdrawal Rejected*\n\n` +
+                        `Request: \`${rid.slice(0, 8)}...\`\n` +
+                        `Amount returned: ${formatRefi(w.amount)}`
                     );
                 } catch (e) {}
             }
@@ -792,7 +824,6 @@ bot.on('callback_query', async (query) => {
                 }
             );
         } else {
-            // Re-run admin_pending
             bot.emit('callback_query', { 
                 ...query, 
                 data: 'admin_pending' 
@@ -808,10 +839,10 @@ bot.on('callback_query', async (query) => {
                 chat_id: chatId,
                 message_id: msgId,
                 parse_mode: 'Markdown',
-                reply_markup: backKeyboard()
+                reply_markup: backButton()
             }
         );
-        userStates[userId] = 'admin_broadcast';
+        updateUser(userId, { pending_state: 'admin_broadcast' });
     }
     
     // ===== ADMIN USERS =====
@@ -825,10 +856,10 @@ bot.on('callback_query', async (query) => {
             const name = u.first_name || 'Unknown';
             const username = u.username ? `@${u.username}` : 'No username';
             const verified = u.verified ? '✅' : '❌';
-            const joined = new Date(u.joined_at * 1000).toISOString().split('T')[0];
+            const joined = new Date(u.joined_at * 1000).toLocaleDateString();
             text += `${verified} ${name} ${username}\n📅 ${joined} | 💰 ${formatRefi(u.balance)}\n\n`;
         });
-        text += `\nTotal users: ${Object.keys(db.users).length}`;
+        text += `\n📊 *Total users: ${Object.keys(db.users).length}*`;
         
         await bot.editMessageText(
             text,
@@ -846,12 +877,12 @@ bot.on('callback_query', async (query) => {
         adminLogout(userId);
         const user = db.users[String(userId)];
         await bot.editMessageText(
-            `🔒 Logged out\n\n💰 Balance: ${formatRefi(user.balance)}`,
+            `🔒 *Logged Out*\n\n💰 Balance: ${formatRefi(user.balance)}`,
             {
                 chat_id: chatId,
                 message_id: msgId,
                 parse_mode: 'Markdown',
-                reply_markup: mainKeyboard(userId)
+                reply_markup: bottomNavigation(userId)
             }
         );
     }
@@ -865,57 +896,58 @@ bot.on('message', async (msg) => {
     const userId = msg.from.id;
     const text = msg.text;
     
-    const state = userStates[userId];
+    const user = db.users[String(userId)];
+    if (!user) return;
+    
+    const pendingState = user.pending_state;
     
     // ===== WAITING FOR WALLET =====
-    if (state === 'waiting_wallet') {
+    if (pendingState === 'waiting_wallet') {
         if (isValidWallet(text)) {
-            updateUser(userId, { wallet: text });
-            delete userStates[userId];
+            updateUser(userId, { 
+                wallet: text, 
+                pending_state: null 
+            });
             
             await bot.sendMessage(chatId,
                 `✅ *Wallet saved successfully!*\n\n` +
-                `Wallet: ${shortWallet(text)}`,
-                { parse_mode: 'Markdown', reply_markup: mainKeyboard(userId) }
+                `Wallet: \`${shortWallet(text)}\`\n\n` +
+                `You can now withdraw your REFi tokens.`,
+                { parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
             );
             console.log(`👛 User ${userId} saved wallet`);
         } else {
             await bot.sendMessage(chatId,
                 `❌ *Invalid wallet address!*\n\n` +
-                `Please send a valid Ethereum address starting with \`0x\` and 42 characters long.`,
+                `Please send a valid BEP20 address starting with \`0x\` and 42 characters long.`,
                 { parse_mode: 'Markdown' }
             );
         }
     }
     
     // ===== WAITING FOR WITHDRAWAL AMOUNT =====
-    else if (state === 'waiting_amount') {
+    else if (pendingState === 'waiting_amount') {
         const amount = parseInt(text.replace(/,/g, ''));
         if (isNaN(amount)) {
-            await bot.sendMessage(chatId, "❌ Invalid amount. Please enter a number.");
+            await bot.sendMessage(chatId, 
+                "❌ *Invalid amount*\n\nPlease enter a valid number.",
+                { parse_mode: 'Markdown' }
+            );
             return;
         }
         
-        const user = db.users[String(userId)];
-        
         if (amount < MIN_WITHDRAW) {
             await bot.sendMessage(chatId, 
-                `❌ Minimum withdrawal amount is ${formatRefi(MIN_WITHDRAW)}.`
+                `❌ *Amount too low*\n\nMinimum withdrawal is ${formatRefi(MIN_WITHDRAW)}.`,
+                { parse_mode: 'Markdown' }
             );
             return;
         }
         
         if (amount > user.balance) {
             await bot.sendMessage(chatId,
-                `❌ Insufficient balance. You have ${formatRefi(user.balance)}.`
-            );
-            return;
-        }
-        
-        const pending = getUserWithdrawals(userId, 'pending');
-        if (pending.length >= 3) {
-            await bot.sendMessage(chatId,
-                `❌ You already have ${pending.length} pending withdrawals.`
+                `❌ *Insufficient balance*\n\nYour balance: ${formatRefi(user.balance)}.`,
+                { parse_mode: 'Markdown' }
             );
             return;
         }
@@ -926,7 +958,8 @@ bot.on('message', async (msg) => {
         const newWithdrawn = (user.total_withdrawn || 0) + amount;
         updateUser(userId, { 
             balance: newBalance, 
-            total_withdrawn: newWithdrawn 
+            total_withdrawn: newWithdrawn,
+            pending_state: null 
         });
         db.stats.total_withdrawn = (db.stats.total_withdrawn || 0) + amount;
         saveDB();
@@ -949,26 +982,28 @@ bot.on('message', async (msg) => {
         
         await bot.sendMessage(chatId,
             `✅ *Withdrawal Request Submitted!*\n\n` +
-            `Request ID: \`${rid.slice(0, 8)}...\`\n` +
-            `Amount: ${formatRefi(amount)}`,
-            { parse_mode: 'Markdown', reply_markup: mainKeyboard(userId) }
+            `• Request ID: \`${rid.slice(0, 8)}...\`\n` +
+            `• Amount: ${formatRefi(amount)}\n` +
+            `• Status: *Pending Review*\n\n` +
+            `You will be notified once processed.`,
+            { parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
         );
         
-        delete userStates[userId];
         console.log(`💰 User ${userId} requested withdrawal of ${amount} REFi`);
     }
     
     // ===== ADMIN LOGIN =====
-    else if (state === 'admin_login') {
+    else if (pendingState === 'admin_login') {
         if (text === ADMIN_PASSWORD) {
             adminLogin(userId);
-            delete userStates[userId];
+            updateUser(userId, { pending_state: null });
             
             const stats = getStats();
             const hours = Math.floor(stats.uptime / 3600);
             const minutes = Math.floor((stats.uptime % 3600) / 60);
             
             await bot.sendMessage(chatId,
+                `✅ *Login Successful!*\n\n` +
                 `👑 *Admin Panel*\n\n` +
                 `📊 *Statistics*\n` +
                 `• Users: ${stats.total_users} (✅ ${stats.verified})\n` +
@@ -979,13 +1014,13 @@ bot.on('message', async (msg) => {
                 { parse_mode: 'Markdown', reply_markup: adminKeyboard() }
             );
         } else {
-            await bot.sendMessage(chatId, "❌ Wrong password!");
+            await bot.sendMessage(chatId, "❌ *Wrong password!*", { parse_mode: 'Markdown' });
         }
     }
     
     // ===== ADMIN BROADCAST =====
-    else if (state === 'admin_broadcast') {
-        delete userStates[userId];
+    else if (pendingState === 'admin_broadcast') {
+        updateUser(userId, { pending_state: null });
         await bot.sendMessage(chatId, `📢 Broadcasting to ${Object.keys(db.users).length} users...`);
         
         let sent = 0;
@@ -1004,7 +1039,9 @@ bot.on('message', async (msg) => {
         }
         
         await bot.sendMessage(chatId,
-            `✅ *Broadcast Complete*\n\nSent: ${sent}\nFailed: ${failed}`,
+            `✅ *Broadcast Complete*\n\n` +
+            `• Sent: ${sent}\n` +
+            `• Failed: ${failed}`,
             { parse_mode: 'Markdown', reply_markup: adminKeyboard() }
         );
     }
@@ -1015,13 +1052,82 @@ app.get('/', (req, res) => {
     const stats = getStats();
     res.send(`
         <html>
-            <head><title>REFi Bot</title></head>
-            <body style="font-family:sans-serif;text-align:center;padding:50px;">
-                <h1>🤖 REFi Bot</h1>
-                <p style="color:green">🟢 RUNNING</p>
-                <p>@${botUsername}</p>
-                <p>Users: ${stats.total_users} | Verified: ${stats.verified}</p>
-                <p><small>${new Date().toLocaleString()}</small></p>
+            <head>
+                <title>🤖 REFi Bot</title>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <style>
+                    body { 
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        color: white;
+                        min-height: 100vh;
+                        margin: 0;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                    }
+                    .container {
+                        text-align: center;
+                        background: rgba(255, 255, 255, 0.1);
+                        backdrop-filter: blur(10px);
+                        padding: 2rem;
+                        border-radius: 20px;
+                        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+                    }
+                    h1 { font-size: 2.5rem; margin-bottom: 1rem; }
+                    .status {
+                        display: inline-block;
+                        padding: 0.5rem 1rem;
+                        border-radius: 50px;
+                        background: rgba(0, 255, 0, 0.2);
+                        border: 1px solid rgba(0, 255, 0, 0.5);
+                        margin: 1rem 0;
+                    }
+                    .stats {
+                        display: grid;
+                        grid-template-columns: repeat(2, 1fr);
+                        gap: 1rem;
+                        margin-top: 2rem;
+                    }
+                    .stat-card {
+                        background: rgba(255, 255, 255, 0.1);
+                        padding: 1rem;
+                        border-radius: 10px;
+                    }
+                    .stat-value { font-size: 1.5rem; font-weight: bold; }
+                    .stat-label { font-size: 0.9rem; opacity: 0.8; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>🤖 REFi Bot</h1>
+                    <div class="status">🟢 ONLINE</div>
+                    <p>@${botUsername}</p>
+                    
+                    <div class="stats">
+                        <div class="stat-card">
+                            <div class="stat-value">${stats.total_users}</div>
+                            <div class="stat-label">Users</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">${stats.verified}</div>
+                            <div class="stat-label">Verified</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">${stats.pending_withdrawals}</div>
+                            <div class="stat-label">Pending</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">${Math.floor(stats.uptime / 3600)}h</div>
+                            <div class="stat-label">Uptime</div>
+                        </div>
+                    </div>
+                    
+                    <p style="margin-top: 2rem; font-size: 0.8rem; opacity: 0.5;">
+                        ${new Date().toLocaleString()}
+                    </p>
+                </div>
             </body>
         </html>
     `);
@@ -1036,3 +1142,6 @@ app.listen(PORT, () => {
 // ==================== START ====================
 console.log('🚀 REFi Bot started successfully!');
 console.log(`📱 Bot username: @${botUsername}`);
+console.log(`💰 Welcome bonus: ${formatRefi(WELCOME_BONUS)}`);
+console.log(`👥 Referral bonus: ${formatRefi(REFERRAL_BONUS)}`);
+console.log(`💸 Minimum withdrawal: ${formatRefi(MIN_WITHDRAW)}`);
