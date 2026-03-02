@@ -1,4 +1,4 @@
-// ==================== REFi BOT - COMPLETE VERSION ====================
+// ==================== REFi BOT - FIXED BOTTOM NAVIGATION ====================
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const express = require('express');
@@ -10,9 +10,22 @@ const token = '7823073143:AAHLNyB7MlVl8rhoMJX7wCAvanJvs2vfwM4';
 const botUsername = 'RealnetworkPaybot';
 const bot = new TelegramBot(token, { polling: true });
 
-// Fix 409 conflict
-bot.deleteWebHook().then(() => console.log('✅ Webhook deleted')).catch(() => {});
-bot.getUpdates({ offset: -1 }).then(() => console.log('✅ Updates cleared')).catch(() => {});
+// Fix any existing webhooks
+bot.deleteWebHook().then(() => {
+    console.log('✅ Webhook deleted');
+    return bot.getUpdates({ offset: -1 });
+}).then(() => {
+    console.log('✅ Cleared all updates');
+}).catch(err => {
+    console.log('⚠️ Cleanup error:', err.message);
+});
+
+// Test token immediately
+bot.getMe().then(me => {
+    console.log(`✅ Bot connected: @${me.username}`);
+}).catch(err => {
+    console.log('❌ Token error:', err.message);
+});
 
 // ==================== CONSTANTS ====================
 const WELCOME_BONUS = 1_000_000;
@@ -191,9 +204,9 @@ async function checkChannels(userId) {
     return true;
 }
 
-// ==================== KEYBOARDS ====================
+// ==================== KEYBOARDS - FIXED BOTTOM NAVIGATION ====================
 function channelsKeyboard() {
-    // أزرار القنوات المنبثقة (تظهر قبل التحقق)
+    // أزرار القنوات المنبثقة (تظهر قبل التحقق فقط)
     const keyboard = [];
     REQUIRED_CHANNELS.forEach(ch => {
         keyboard.push([{ 
@@ -209,10 +222,10 @@ function channelsKeyboard() {
 }
 
 function bottomNavigation(userId) {
-    // أزرار ثابتة في الأسفل بعد التحقق
+    // أزرار ثابتة في الأسفل (تظهر بعد التحقق)
     const user = db.users[String(userId)] || {};
     
-    // الصف الأول: 3 أزرار أساسية
+    // الصف الأول - 3 أزرار أساسية
     const keyboard = [
         [
             { text: '💰 Balance', callback_data: 'bal' },
@@ -221,17 +234,17 @@ function bottomNavigation(userId) {
         ]
     ];
     
-    // الصف الثاني: أزرار المحفظة والسحب
+    // الصف الثاني - أزرار المحفظة والسحب
     const secondRow = [];
+    
+    // زر المحفظة (يظهر دائماً)
     secondRow.push({ text: '👛 Wallet', callback_data: 'wallet' });
     
+    // إذا كان لديه محفظة، يظهر زر السحب - وإلا يظهر رسالة تعيين المحفظة
     if (user.wallet) {
-        // إذا لديه محفظة: يظهر زر السحب
         secondRow.push({ text: '💸 Withdraw', callback_data: 'wd' });
-    } else {
-        // إذا ليس لديه محفظة: يظهر زر تعيين المحفظة
-        secondRow.push({ text: '⚙️ Set Wallet', callback_data: 'wallet' });
     }
+    
     keyboard.push(secondRow);
     
     // زر المشرف (للمشرفين فقط)
@@ -304,7 +317,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
         }
     }
     
-    // إذا كان محققاً مسبقاً
+    // إذا كان محققاً مسبقاً → أزرار ثابتة في الأسفل
     if (user.verified) {
         await bot.sendMessage(chatId, 
             `🎯 *Welcome Back!*\n\n💰 Balance: ${formatRefi(user.balance)}`,
@@ -350,12 +363,13 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
             }
         }
         
+        // بعد التحقق → أزرار ثابتة في الأسفل
         await bot.sendMessage(chatId, 
             `✅ *Verification Successful!*\n\n✨ Added ${formatRefi(WELCOME_BONUS)}\n💰 Balance: ${formatRefi(newBalance)}`,
             { parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
         );
     } else {
-        // رسالة القنوات
+        // قبل التحقق → رسالة القنوات مع أزرار عائمة (فقط هذه عائمة)
         const channelsText = REQUIRED_CHANNELS.map(ch => `• ${ch.name}`).join('\n');
         await bot.sendMessage(chatId, 
             `🎉 *Welcome to Realfinancepaybot!*\n\n` +
@@ -675,7 +689,6 @@ bot.on('callback_query', async (query) => {
                         `✅ *Withdrawal Approved!*\n\nAmount: ${formatRefi(w.amount)}`
                     );
                     
-                    // Post to payment channel
                     const user = db.users[w.user_id] || {};
                     const channelMsg = 
                         `✅ *Withdrawal Approved*\n\n` +
@@ -710,7 +723,6 @@ bot.on('callback_query', async (query) => {
                         `❌ *Withdrawal Rejected*\n\nAmount returned: ${formatRefi(w.amount)}`
                     );
                     
-                    // Post to payment channel
                     const user = db.users[w.user_id] || {};
                     const channelMsg = 
                         `❌ *Withdrawal Rejected*\n\n` +
