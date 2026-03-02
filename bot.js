@@ -1,4 +1,4 @@
-// ==================== REFi BOT - ULTIMATE FINAL VERSION ====================
+// ==================== REFi BOT - ULTIMATE FINAL VERSION (HTML) ====================
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const express = require('express');
@@ -9,6 +9,9 @@ const PORT = process.env.PORT || 10000;
 // ==================== CONFIG ====================
 const token = '7823073143:AAGdGquDK2Ee-wOp5bGzS6dx2y92wRBOVJw';
 const botUsername = 'RealnetworkPaybot';
+
+// متغير لتخزين معلومات البوت
+let botMe = null;
 
 // تكوين البوت مع إعدادات متقدمة
 const bot = new TelegramBot(token, { 
@@ -31,9 +34,10 @@ bot.deleteWebHook().then(() => {
     console.log('⚠️ Cleanup error:', err.message);
 });
 
-// اختبار التوكن
+// اختبار التوكن وتخزين معلومات البوت
 bot.getMe().then(me => {
-    console.log(`✅ Bot connected: @${me.username}`);
+    botMe = me;
+    console.log(`✅ Bot connected: @${me.username} (ID: ${me.id})`);
 }).catch(err => {
     console.log('❌ Token error:', err.message);
     process.exit(1);
@@ -45,7 +49,7 @@ const REFERRAL_BONUS = 1_000_000;
 const MIN_WITHDRAW = 5_000_000;
 const ADMIN_IDS = [1653918641];
 const ADMIN_PASSWORD = 'Ali97$';
-const PAYMENT_GROUP = -1002692937287;  // Payment group for admins
+const PAYMENT_GROUP = -1002692937287;  // مجموعة المدفوعات (المشرفين)
 
 // القنوات المطلوبة
 const REQUIRED_CHANNELS = [
@@ -142,7 +146,7 @@ function getUserWithdrawals(userId, status = null) {
     }
 }
 
-// دالة طلب السحب الجديدة - ترسل للمجموعة مباشرة
+// ==================== WITHDRAWAL FUNCTION (باستخدام HTML) ====================
 async function requestWithdrawal(userId, amount, wallet) {
     const uid = String(userId);
     const user = db.users[uid];
@@ -162,7 +166,7 @@ async function requestWithdrawal(userId, amount, wallet) {
     db.stats.total_withdrawn = (db.stats.total_withdrawn || 0) + amount;
     saveDB();
     
-    // تجهيز معرف الطلب (للتتبع فقط)
+    // تجهيز معرف الطلب
     const requestId = `WD${Math.floor(Date.now() / 1000)}${uid.slice(-4)}`;
     
     // تجهيز تاريخ الطلب
@@ -173,51 +177,53 @@ async function requestWithdrawal(userId, amount, wallet) {
     // تجهيز رابط المستخدم
     const userLink = user.username 
         ? `@${user.username}` 
-        : `[Click to contact](tg://user?id=${userId})`;
+        : `<a href="tg://user?id=${userId}">Click to contact</a>`;
     
-    // رسالة المجموعة - واضحة وبسيطة
+    // رسالة المجموعة - باستخدام HTML بدلاً من Markdown
     const groupMessage = 
-        `🆕 *New Withdrawal Request*\n\n` +
+        `🆕 <b>New Withdrawal Request</b>\n\n` +
         `━━━━━━━━━━━━━━━━━━━━\n\n` +
-        `👤 *User:* ${user.first_name || 'Unknown'}\n` +
-        `🆔 *User ID:* \`${userId}\`\n` +
-        `📱 *Username:* ${userLink}\n` +
-        `👥 *Referrals:* ${user.referrals_count || 0}\n` +
-        `💰 *Amount:* ${formatRefi(amount)}\n` +
-        `📮 *Wallet Address:* \`${wallet}\`\n\n` +
-        `📅 *Date:* ${dateStr} - ${timeStr}\n` +
-        `🆔 *Request ID:* \`${requestId}\`\n\n` +
+        `👤 <b>User:</b> ${user.first_name || 'Unknown'}\n` +
+        `🆔 <b>User ID:</b> <code>${userId}</code>\n` +
+        `📱 <b>Username:</b> ${userLink}\n` +
+        `👥 <b>Referrals:</b> ${user.referrals_count || 0}\n` +
+        `💰 <b>Amount:</b> ${formatRefi(amount)}\n` +
+        `📮 <b>Wallet Address:</b> <code>${wallet}</code>\n\n` +
+        `📅 <b>Date:</b> ${dateStr} - ${timeStr}\n` +
+        `🆔 <b>Request ID:</b> <code>${requestId}</code>\n\n` +
         `━━━━━━━━━━━━━━━━━━━━\n\n` +
-        `🔹 *To process:* Copy the wallet address above and send payment\n` +
-        `🔹 *After payment:* Reply to this message with confirmation`;
+        `🔹 <b>To process:</b> Copy the wallet address above and send payment\n` +
+        `🔹 <b>After payment:</b> Reply to this message with confirmation`;
     
     // محاولة إرسال للمجموعة
     try {
-        console.log(`📢 Sending withdrawal request to group ${PAYMENT_GROUP}`);
+        console.log(`📢 Attempting to send to group ${PAYMENT_GROUP}...`);
         
-        await bot.sendMessage(PAYMENT_GROUP, groupMessage, { 
-            parse_mode: 'Markdown',
+        const sentMessage = await bot.sendMessage(PAYMENT_GROUP, groupMessage, { 
+            parse_mode: 'HTML',
             disable_web_page_preview: true
         });
         
-        console.log(`✅ Withdrawal request sent to group: ${requestId}`);
+        console.log(`✅ Message sent successfully! Message ID: ${sentMessage.message_id}`);
         
         // إرسال تأكيد للمستخدم
         await bot.sendMessage(userId,
-            `✅ *Withdrawal Request Submitted!*\n\n` +
+            `✅ <b>Withdrawal Request Submitted!</b>\n\n` +
             `💰 Amount: ${formatRefi(amount)}\n` +
-            `📮 Wallet: \`${wallet}\`\n\n` +
+            `📮 Wallet: <code>${wallet}</code>\n\n` +
             `Your request has been sent to the admins. You will be notified once processed.`,
-            { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+            { parse_mode: 'HTML', ...bottomReplyKeyboard(userId) }
         );
         
         return true;
         
     } catch (error) {
-        console.log('❌ Failed to send to group:', error.message);
-        console.log('Error details:', error);
+        console.log('❌ FAILED TO SEND TO GROUP!');
+        console.log('Error code:', error.code);
+        console.log('Error message:', error.message);
         
         // إذا فشل الإرسال، نرجع الرصيد للمستخدم
+        console.log('💰 Refunding user...');
         updateUser(userId, { 
             balance: user.balance,
             total_withdrawn: user.total_withdrawn,
@@ -226,9 +232,9 @@ async function requestWithdrawal(userId, amount, wallet) {
         
         // إرسال رسالة خطأ للمستخدم
         await bot.sendMessage(userId,
-            `❌ *Error*\n\n` +
+            `❌ <b>Error</b>\n\n` +
             `Could not process your request. Please try again later or contact support.`,
-            { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+            { parse_mode: 'HTML', ...bottomReplyKeyboard(userId) }
         );
         
         return false;
@@ -272,7 +278,7 @@ function getStats() {
     };
 }
 
-// ==================== FORMATTING ====================
+// ==================== FORMATTING (لـ HTML) ====================
 function formatRefi(refi) {
     try {
         const amount = Number(refi) || 0;
@@ -306,42 +312,6 @@ async function checkChannels(userId) {
     }
     return true;
 }
-
-// ==================== TEST GROUP CONNECTION ====================
-async function testGroupConnection() {
-    try {
-        console.log(`🔍 Testing connection to group: ${PAYMENT_GROUP}`);
-        
-        // محاولة جلب معلومات المجموعة
-        const chat = await bot.getChat(PAYMENT_GROUP);
-        console.log(`✅ Group found: ${chat.title}`);
-        console.log(`📊 Group type: ${chat.type}`);
-        
-        // محاولة إرسال رسالة اختبار
-        await bot.sendMessage(PAYMENT_GROUP, 
-            `🤖 *Bot Connected*\n\n` +
-            `✅ Bot is running normally\n` +
-            `🕐 ${new Date().toLocaleString('en-US')}`,
-            { parse_mode: 'Markdown' }
-        );
-        
-        console.log('✅ Test message sent to group successfully');
-        
-    } catch (error) {
-        console.log('❌ Group connection failed:');
-        console.log('Error code:', error.code);
-        console.log('Error message:', error.message);
-        
-        if (error.code === 'ETELEGRAM' && error.message.includes('chat not found')) {
-            console.log('⚠️ Bot is not a member of the group or group does not exist');
-        } else if (error.code === 'ETELEGRAM' && error.message.includes('need administrator rights')) {
-            console.log('⚠️ Bot needs to be an admin in the group');
-        }
-    }
-}
-
-// شغل الاختبار بعد 3 ثواني
-setTimeout(testGroupConnection, 3000);
 
 // ==================== KEYBOARDS ====================
 function channelsKeyboard() {
@@ -403,6 +373,63 @@ function adminInlineKeyboard() {
         ]
     };
 }
+
+// ==================== DIAGNOSTIC TOOL ====================
+async function diagnoseGroupIssue() {
+    console.log('\n' + '='.repeat(60));
+    console.log('🔍 DIAGNOSTIC TOOL - Checking Group Connection');
+    console.log('='.repeat(60));
+    
+    const groupId = PAYMENT_GROUP;
+    console.log(`📌 Group ID: ${groupId}`);
+    
+    try {
+        // 1. محاولة جلب معلومات المجموعة
+        console.log('\n1️⃣ Checking if group exists...');
+        const chat = await bot.getChat(groupId);
+        console.log(`   ✅ Group found: "${chat.title}"`);
+        console.log(`   📊 Type: ${chat.type}`);
+        console.log(`   🆔 ID: ${chat.id}`);
+        
+        // 2. التحقق من نوع المجموعة
+        if (chat.type !== 'group' && chat.type !== 'supergroup') {
+            console.log(`   ❌ This is a ${chat.type}, not a group!`);
+            return;
+        }
+        
+        // 3. جلب معلومات البوت في المجموعة
+        console.log('\n2️⃣ Checking bot permissions...');
+        const botMember = await bot.getChatMember(groupId, botMe.id);
+        console.log(`   🤖 Bot status: ${botMember.status}`);
+        
+        // 4. محاولة إرسال رسالة اختبار
+        console.log('\n3️⃣ Attempting to send test message...');
+        const testMsg = await bot.sendMessage(groupId, 
+            `🧪 <b>Test Message</b>\n\n` +
+            `If you see this message, the bot can send to the group ✅\n` +
+            `🕐 ${new Date().toLocaleString()}`,
+            { parse_mode: 'HTML' }
+        );
+        console.log(`   ✅ Test message sent successfully!`);
+        
+        console.log('\n' + '='.repeat(60));
+        console.log('✅ ALL CHECKS PASSED - Group is configured correctly!');
+        console.log('='.repeat(60));
+        
+    } catch (error) {
+        console.log('\n❌ ERROR DETECTED:');
+        console.log('='.repeat(60));
+        console.log(`Error code: ${error.code}`);
+        console.log(`Error message: ${error.message}`);
+    }
+}
+
+// شغل التشخيص بعد 5 ثواني
+setTimeout(() => {
+    if (botMe) {
+        diagnoseGroupIssue();
+    }
+}, 5000);
 
 // ==================== SMART KEEP ALIVE SYSTEM ====================
 class SmartKeepAlive {
@@ -472,8 +499,8 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
             updateUser(referrerId, { referral_clicks: (referrer.referral_clicks || 0) + 1 });
             try {
                 await bot.sendMessage(referrerId, 
-                    `👋 *Someone clicked your referral link!*\n\nThey'll get ${formatRefi(REFERRAL_BONUS)} when they verify.`,
-                    { parse_mode: 'Markdown' }
+                    `👋 <b>Someone clicked your referral link!</b>\n\nThey'll get ${formatRefi(REFERRAL_BONUS)} when they verify.`,
+                    { parse_mode: 'HTML' }
                 );
             } catch (e) {}
         }
@@ -481,9 +508,9 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     
     if (user.verified) {
         await bot.sendMessage(chatId, 
-            `🎯 *Welcome Back!*\n\n💰 Balance: ${formatRefi(user.balance)}`,
+            `🎯 <b>Welcome Back!</b>\n\n💰 Balance: ${formatRefi(user.balance)}`,
             { 
-                parse_mode: 'Markdown', 
+                parse_mode: 'HTML', 
                 ...bottomReplyKeyboard(userId) 
             }
         );
@@ -492,14 +519,14 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     
     const channelsText = REQUIRED_CHANNELS.map(ch => `• ${ch.name}`).join('\n');
     await bot.sendMessage(chatId, 
-        `🎉 *Welcome to Realfinancepaybot!*\n\n` +
-        `💰 *Welcome Bonus:* ${formatRefi(WELCOME_BONUS)}\n` +
-        `👥 *Referral Bonus:* ${formatRefi(REFERRAL_BONUS)} per friend\n\n` +
-        `📢 *To start, you must join these channels first:*\n${channelsText}\n\n` +
-        `🐦 *Optional:* Follow on X for updates\n\n` +
+        `🎉 <b>Welcome to Realfinancepaybot!</b>\n\n` +
+        `💰 <b>Welcome Bonus:</b> ${formatRefi(WELCOME_BONUS)}\n` +
+        `👥 <b>Referral Bonus:</b> ${formatRefi(REFERRAL_BONUS)} per friend\n\n` +
+        `📢 <b>To start, you must join these channels first:</b>\n${channelsText}\n\n` +
+        `🐦 <i>Optional:</i> Follow on X for updates\n\n` +
         `👇 After joining, click the VERIFY button`,
         { 
-            parse_mode: 'Markdown', 
+            parse_mode: 'HTML', 
             reply_markup: channelsKeyboard()
         }
     );
@@ -514,8 +541,8 @@ bot.onText(/\/admin/, async (msg) => {
     
     if (!ADMIN_IDS.includes(Number(userId))) {
         await bot.sendMessage(chatId,
-            `⛔ *Unauthorized Access*\n\nYou are not authorized to use this command.`,
-            { parse_mode: 'Markdown' }
+            `⛔ <b>Unauthorized Access</b>\n\nYou are not authorized to use this command.`,
+            { parse_mode: 'HTML' }
         );
         return;
     }
@@ -526,22 +553,22 @@ bot.onText(/\/admin/, async (msg) => {
         const minutes = Math.floor((stats.uptime % 3600) / 60);
         
         await bot.sendMessage(chatId,
-            `👑 *Admin Panel*\n\n` +
-            `📊 *Statistics*\n` +
+            `👑 <b>Admin Panel</b>\n\n` +
+            `📊 <b>Statistics</b>\n` +
             `• Users: ${stats.total_users} (✅ ${stats.verified})\n` +
             `• Twitter followers: ${stats.twitter_followers}\n` +
             `• Balance: ${formatRefi(stats.total_balance)}\n` +
             `• Withdrawn: ${formatRefi(stats.total_withdrawn)}\n` +
             `• Total referrals: ${stats.total_referrals}\n` +
             `• Uptime: ${hours}h ${minutes}m`,
-            { parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
+            { parse_mode: 'HTML', reply_markup: adminInlineKeyboard() }
         );
         return;
     }
     
     await bot.sendMessage(chatId,
-        "🔐 *Admin Login*\n\nPlease enter the admin password:",
-        { parse_mode: 'Markdown', ...removeKeyboard() }
+        "🔐 <b>Admin Login</b>\n\nPlease enter the admin password:",
+        { parse_mode: 'HTML', ...removeKeyboard() }
     );
     
     updateUser(userId, { pending_state: 'admin_login' });
@@ -591,19 +618,19 @@ bot.on('callback_query', async (query) => {
                         
                         try {
                             await bot.sendMessage(Number(referrerId), 
-                                `🎉 *You earned ${formatRefi(REFERRAL_BONUS)} from a referral!*`,
-                                { parse_mode: 'Markdown' }
+                                `🎉 <b>You earned ${formatRefi(REFERRAL_BONUS)} from a referral!</b>`,
+                                { parse_mode: 'HTML' }
                             );
                         } catch (e) {}
                     }
                 }
                 
                 await bot.editMessageText(
-                    `✅ *Verification Successful!*\n\n✨ Added ${formatRefi(WELCOME_BONUS)}\n💰 Balance: ${formatRefi(newBalance)}`,
+                    `✅ <b>Verification Successful!</b>\n\n✨ Added ${formatRefi(WELCOME_BONUS)}\n💰 Balance: ${formatRefi(newBalance)}`,
                     { 
                         chat_id: chatId, 
                         message_id: msgId, 
-                        parse_mode: 'Markdown' 
+                        parse_mode: 'HTML' 
                     }
                 );
                 
@@ -615,7 +642,7 @@ bot.on('callback_query', async (query) => {
             } else if (user.verified) {
                 await bot.editMessageText(
                     `✅ You're already verified!`,
-                    { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown' }
+                    { chat_id: chatId, message_id: msgId, parse_mode: 'HTML' }
                 );
                 
                 await bot.sendMessage(chatId,
@@ -625,11 +652,11 @@ bot.on('callback_query', async (query) => {
             } else {
                 const channelsText = REQUIRED_CHANNELS.map(ch => `• ${ch.name}`).join('\n');
                 await bot.editMessageText(
-                    `❌ *Not joined yet!*\n\nPlease join:\n${channelsText}`,
+                    `❌ <b>Not joined yet!</b>\n\nPlease join:\n${channelsText}`,
                     { 
                         chat_id: chatId, 
                         message_id: msgId, 
-                        parse_mode: 'Markdown',
+                        parse_mode: 'HTML',
                         reply_markup: channelsKeyboard() 
                     }
                 );
@@ -647,16 +674,16 @@ bot.on('callback_query', async (query) => {
             
             if (!user.verified) {
                 await bot.sendMessage(chatId,
-                    `❌ *Please verify first!*\n\nYou need to join the channels and click VERIFY.`,
-                    { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+                    `❌ <b>Please verify first!</b>\n\nYou need to join the channels and click VERIFY.`,
+                    { parse_mode: 'HTML', ...bottomReplyKeyboard(userId) }
                 );
                 return;
             }
             
             if (!user.wallet) {
                 await bot.sendMessage(chatId,
-                    `👛 *Wallet Required*\n\nPlease send your BEP20 wallet address.`,
-                    { parse_mode: 'Markdown', ...removeKeyboard() }
+                    `👛 <b>Wallet Required</b>\n\nPlease send your BEP20 wallet address.`,
+                    { parse_mode: 'HTML', ...removeKeyboard() }
                 );
                 updateUser(userId, { pending_state: 'waiting_wallet' });
                 return;
@@ -665,22 +692,22 @@ bot.on('callback_query', async (query) => {
             if ((user.balance || 0) < MIN_WITHDRAW) {
                 const needed = MIN_WITHDRAW - (user.balance || 0);
                 await bot.sendMessage(chatId,
-                    `⚠️ *Insufficient Balance*\n\n` +
+                    `⚠️ <b>Insufficient Balance</b>\n\n` +
                     `Minimum withdrawal: ${formatRefi(MIN_WITHDRAW)}\n` +
                     `Your balance: ${formatRefi(user.balance || 0)}\n\n` +
-                    `You need **${formatRefi(needed)}** more to withdraw.`,
-                    { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+                    `You need <b>${formatRefi(needed)}</b> more to withdraw.`,
+                    { parse_mode: 'HTML', ...bottomReplyKeyboard(userId) }
                 );
                 return;
             }
             
             await bot.sendMessage(chatId,
-                `💸 *Withdrawal Request*\n\n` +
+                `💸 <b>Withdrawal Request</b>\n\n` +
                 `Balance: ${formatRefi(user.balance || 0)}\n` +
                 `Minimum: ${formatRefi(MIN_WITHDRAW)}\n` +
                 `Wallet: ${shortWallet(user.wallet)}\n\n` +
-                `📝 *Enter amount:*`,
-                { parse_mode: 'Markdown', ...removeKeyboard() }
+                `📝 <b>Enter amount:</b>`,
+                { parse_mode: 'HTML', ...removeKeyboard() }
             );
             
             updateUser(userId, { pending_state: 'waiting_amount' });
@@ -692,8 +719,8 @@ bot.on('callback_query', async (query) => {
             await bot.deleteMessage(chatId, msgId).catch(() => {});
             const user = db.users[String(userId)];
             await bot.sendMessage(chatId,
-                `🎯 *Main Menu*\n\n💰 Balance: ${formatRefi(user?.balance || 0)}`,
-                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+                `🎯 <b>Main Menu</b>\n\n💰 Balance: ${formatRefi(user?.balance || 0)}`,
+                { parse_mode: 'HTML', ...bottomReplyKeyboard(userId) }
             );
         }
         
@@ -708,12 +735,12 @@ bot.on('callback_query', async (query) => {
             
             const stats = getStats();
             await bot.editMessageText(
-                `📊 *Statistics*\n\n` +
+                `📊 <b>Statistics</b>\n\n` +
                 `Users: ${stats.total_users}\n` +
                 `Verified: ${stats.verified}\n` +
                 `Twitter: ${stats.twitter_followers}\n` +
                 `Balance: ${formatRefi(stats.total_balance)}\n`,
-                { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
+                { chat_id: chatId, message_id: msgId, parse_mode: 'HTML', reply_markup: adminInlineKeyboard() }
             );
         }
         
@@ -727,11 +754,11 @@ bot.on('callback_query', async (query) => {
             }
             
             await bot.editMessageText(
-                "📢 *Broadcast*\n\nSend the message you want to broadcast to all users:",
+                "📢 <b>Broadcast</b>\n\nSend the message you want to broadcast to all users:",
                 { 
                     chat_id: chatId, 
                     message_id: msgId, 
-                    parse_mode: 'Markdown', 
+                    parse_mode: 'HTML', 
                     reply_markup: { 
                         inline_keyboard: [[{ text: '🔙 Cancel', callback_data: 'admin_back' }]] 
                     } 
@@ -753,7 +780,7 @@ bot.on('callback_query', async (query) => {
                 .sort((a, b) => (b.joined_at || 0) - (a.joined_at || 0))
                 .slice(0, 10);
             
-            let text = "👥 *Recent Users*\n\n";
+            let text = "👥 <b>Recent Users</b>\n\n";
             users.forEach(u => {
                 const name = u.first_name || 'Unknown';
                 const username = u.username ? `@${u.username}` : 'No username';
@@ -762,11 +789,11 @@ bot.on('callback_query', async (query) => {
                 const joined = u.joined_at ? new Date(u.joined_at * 1000).toLocaleDateString() : 'Unknown';
                 text += `${verified}${twitter} ${name} ${username}\n📅 ${joined} | 💰 ${formatRefi(u.balance || 0)}\n\n`;
             });
-            text += `\n📊 *Total users: ${Object.keys(db.users).length}*`;
+            text += `\n📊 <b>Total users: ${Object.keys(db.users).length}</b>`;
             
             await bot.editMessageText(
                 text,
-                { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
+                { chat_id: chatId, message_id: msgId, parse_mode: 'HTML', reply_markup: adminInlineKeyboard() }
             );
         }
         
@@ -781,13 +808,13 @@ bot.on('callback_query', async (query) => {
             
             const stats = getStats();
             await bot.editMessageText(
-                `👑 *Admin Panel*\n\n` +
-                `📊 *Statistics*\n` +
+                `👑 <b>Admin Panel</b>\n\n` +
+                `📊 <b>Statistics</b>\n` +
                 `• Users: ${stats.total_users} (✅ ${stats.verified})\n` +
                 `• Twitter: ${stats.twitter_followers}\n` +
                 `• Balance: ${formatRefi(stats.total_balance)}\n` +
                 `• Referrals: ${stats.total_referrals}`,
-                { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
+                { chat_id: chatId, message_id: msgId, parse_mode: 'HTML', reply_markup: adminInlineKeyboard() }
             );
         }
         
@@ -803,8 +830,8 @@ bot.on('callback_query', async (query) => {
             adminLogout(userId);
             const user = db.users[String(userId)];
             await bot.editMessageText(
-                `🔒 *Logged Out*\n\n💰 Balance: ${formatRefi(user?.balance || 0)}`,
-                { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: bottomReplyKeyboard(userId) }
+                `🔒 <b>Logged Out</b>\n\n💰 Balance: ${formatRefi(user?.balance || 0)}`,
+                { chat_id: chatId, message_id: msgId, parse_mode: 'HTML', reply_markup: bottomReplyKeyboard(userId) }
             );
         }
         
@@ -838,12 +865,12 @@ bot.on('message', async (msg) => {
     try {
         if (text === '💰 Balance') {
             await bot.sendMessage(chatId,
-                `💰 *Your Balance*\n\n` +
+                `💰 <b>Your Balance</b>\n\n` +
                 `• Current: ${formatRefi(user.balance || 0)}\n` +
                 `• Total earned: ${formatRefi(user.total_earned || 0)}\n` +
                 `• Total withdrawn: ${formatRefi(user.total_withdrawn || 0)}\n` +
                 `• Referrals: ${user.referrals_count || 0}`,
-                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+                { parse_mode: 'HTML', ...bottomReplyKeyboard(userId) }
             );
         }
         
@@ -852,11 +879,11 @@ bot.on('message', async (msg) => {
             const earned = (user.referrals_count || 0) * REFERRAL_BONUS;
             
             await bot.sendMessage(chatId,
-                `🔗 *Your Referral Link*\n\n\`${link}\`\n\n` +
+                `🔗 <b>Your Referral Link</b>\n\n<code>${link}</code>\n\n` +
                 `• Link clicks: ${user.referral_clicks || 0}\n` +
                 `• Successful referrals: ${user.referrals_count || 0}\n` +
                 `• Earnings from referrals: ${formatRefi(earned)}`,
-                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+                { parse_mode: 'HTML', ...bottomReplyKeyboard(userId) }
             );
         }
         
@@ -864,8 +891,8 @@ bot.on('message', async (msg) => {
             const joined = user.joined_at ? new Date(user.joined_at * 1000).toLocaleDateString() : 'Unknown';
             
             await bot.sendMessage(chatId,
-                `📊 *Your Statistics*\n\n` +
-                `• ID: \`${userId}\`\n` +
+                `📊 <b>Your Statistics</b>\n\n` +
+                `• ID: <code>${userId}</code>\n` +
                 `• Joined: ${joined}\n` +
                 `• Balance: ${formatRefi(user.balance || 0)}\n` +
                 `• Total earned: ${formatRefi(user.total_earned || 0)}\n` +
@@ -873,23 +900,23 @@ bot.on('message', async (msg) => {
                 `• Link clicks: ${user.referral_clicks || 0}\n` +
                 `• Verified: ${user.verified ? '✅' : '❌'}\n` +
                 `• Wallet: ${user.wallet ? shortWallet(user.wallet) : 'Not set'}`,
-                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+                { parse_mode: 'HTML', ...bottomReplyKeyboard(userId) }
             );
         }
         
         else if (text === '💸 Withdraw') {
             if (!user.verified) {
                 await bot.sendMessage(chatId,
-                    `❌ *Please verify first!*\n\nYou need to join the channels and click VERIFY.`,
-                    { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+                    `❌ <b>Please verify first!</b>\n\nYou need to join the channels and click VERIFY.`,
+                    { parse_mode: 'HTML', ...bottomReplyKeyboard(userId) }
                 );
                 return;
             }
             
             if (!user.wallet) {
                 await bot.sendMessage(chatId,
-                    `👛 *Wallet Required*\n\nPlease send your BEP20 wallet address.\nIt must start with \`0x\` and be 42 characters long.`,
-                    { parse_mode: 'Markdown', ...removeKeyboard() }
+                    `👛 <b>Wallet Required</b>\n\nPlease send your BEP20 wallet address.\nIt must start with <code>0x</code> and be 42 characters long.`,
+                    { parse_mode: 'HTML', ...removeKeyboard() }
                 );
                 updateUser(userId, { pending_state: 'waiting_wallet' });
                 return;
@@ -898,22 +925,22 @@ bot.on('message', async (msg) => {
             if ((user.balance || 0) < MIN_WITHDRAW) {
                 const needed = MIN_WITHDRAW - (user.balance || 0);
                 await bot.sendMessage(chatId,
-                    `⚠️ *Insufficient Balance*\n\n` +
+                    `⚠️ <b>Insufficient Balance</b>\n\n` +
                     `Minimum withdrawal: ${formatRefi(MIN_WITHDRAW)}\n` +
                     `Your balance: ${formatRefi(user.balance || 0)}\n\n` +
-                    `You need **${formatRefi(needed)}** more to withdraw.`,
-                    { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+                    `You need <b>${formatRefi(needed)}</b> more to withdraw.`,
+                    { parse_mode: 'HTML', ...bottomReplyKeyboard(userId) }
                 );
                 return;
             }
             
             await bot.sendMessage(chatId,
-                `💸 *Withdrawal Request*\n\n` +
+                `💸 <b>Withdrawal Request</b>\n\n` +
                 `Balance: ${formatRefi(user.balance || 0)}\n` +
                 `Minimum: ${formatRefi(MIN_WITHDRAW)}\n` +
                 `Wallet: ${shortWallet(user.wallet)}\n\n` +
-                `📝 *Enter amount:*`,
-                { parse_mode: 'Markdown', ...removeKeyboard() }
+                `📝 <b>Enter amount:</b>`,
+                { parse_mode: 'HTML', ...removeKeyboard() }
             );
             
             updateUser(userId, { pending_state: 'waiting_amount' });
@@ -921,12 +948,12 @@ bot.on('message', async (msg) => {
         
         else if (text === '👑 Admin Panel') {
             if (!ADMIN_IDS.includes(Number(userId))) {
-                await bot.sendMessage(chatId, `⛔ *Unauthorized Access*`, { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) });
+                await bot.sendMessage(chatId, `⛔ <b>Unauthorized Access</b>`, { parse_mode: 'HTML', ...bottomReplyKeyboard(userId) });
                 return;
             }
             
             if (!isAdminLoggedIn(userId)) {
-                await bot.sendMessage(chatId, "🔐 *Admin Login*\n\nPlease use /admin command to login.", { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) });
+                await bot.sendMessage(chatId, "🔐 <b>Admin Login</b>\n\nPlease use /admin command to login.", { parse_mode: 'HTML', ...bottomReplyKeyboard(userId) });
                 return;
             }
             
@@ -935,15 +962,15 @@ bot.on('message', async (msg) => {
             const minutes = Math.floor((stats.uptime % 3600) / 60);
             
             await bot.sendMessage(chatId,
-                `👑 *Admin Panel*\n\n` +
-                `📊 *Statistics*\n` +
+                `👑 <b>Admin Panel</b>\n\n` +
+                `📊 <b>Statistics</b>\n` +
                 `• Users: ${stats.total_users} (✅ ${stats.verified})\n` +
                 `• Twitter followers: ${stats.twitter_followers}\n` +
                 `• Balance: ${formatRefi(stats.total_balance)}\n` +
                 `• Withdrawn: ${formatRefi(stats.total_withdrawn)}\n` +
                 `• Total referrals: ${stats.total_referrals}\n` +
                 `• Uptime: ${hours}h ${minutes}m`,
-                { parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
+                { parse_mode: 'HTML', reply_markup: adminInlineKeyboard() }
             );
         }
         
@@ -951,8 +978,8 @@ bot.on('message', async (msg) => {
             if (isValidWallet(text)) {
                 updateUser(userId, { wallet: text, pending_state: null });
                 await bot.sendMessage(chatId,
-                    `✅ *Wallet saved!*\n\n${shortWallet(text)}`,
-                    { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+                    `✅ <b>Wallet saved!</b>\n\n${shortWallet(text)}`,
+                    { parse_mode: 'HTML', ...bottomReplyKeyboard(userId) }
                 );
                 console.log(`👛 Wallet set for ${userId}`);
                 
@@ -969,8 +996,8 @@ bot.on('message', async (msg) => {
                 );
             } else {
                 await bot.sendMessage(chatId,
-                    "❌ *Invalid wallet address!*\n\nMust start with 0x and be 42 characters.",
-                    { parse_mode: 'Markdown' }
+                    "❌ <b>Invalid wallet address!</b>\n\nMust start with 0x and be 42 characters.",
+                    { parse_mode: 'HTML' }
                 );
             }
         }
@@ -996,15 +1023,13 @@ bot.on('message', async (msg) => {
             const success = await requestWithdrawal(userId, amount, user.wallet);
             
             if (success) {
-                // تم إرسال التأكيد داخل الدالة
                 console.log(`💰 Withdrawal: ${userId} requested ${amount} REFi (sent to group)`);
             }
-            // إذا فشل، الدالة ترسل رسالة الخطأ
         }
         
         else if (user.pending_state === 'admin_login') {
             if (!ADMIN_IDS.includes(Number(userId))) {
-                await bot.sendMessage(chatId, `⛔ *Unauthorized*`, { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) });
+                await bot.sendMessage(chatId, `⛔ <b>Unauthorized</b>`, { parse_mode: 'HTML', ...bottomReplyKeyboard(userId) });
                 updateUser(userId, { pending_state: null });
                 return;
             }
@@ -1018,25 +1043,25 @@ bot.on('message', async (msg) => {
                 const minutes = Math.floor((stats.uptime % 3600) / 60);
                 
                 await bot.sendMessage(chatId,
-                    `✅ *Login Successful!*\n\n` +
-                    `👑 *Admin Panel*\n\n` +
-                    `📊 *Statistics*\n` +
+                    `✅ <b>Login Successful!</b>\n\n` +
+                    `👑 <b>Admin Panel</b>\n\n` +
+                    `📊 <b>Statistics</b>\n` +
                     `• Users: ${stats.total_users} (✅ ${stats.verified})\n` +
                     `• Twitter followers: ${stats.twitter_followers}\n` +
                     `• Balance: ${formatRefi(stats.total_balance)}\n` +
                     `• Withdrawn: ${formatRefi(stats.total_withdrawn)}\n` +
                     `• Uptime: ${hours}h ${minutes}m`,
-                    { parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
+                    { parse_mode: 'HTML', reply_markup: adminInlineKeyboard() }
                 );
             } else {
-                await bot.sendMessage(chatId, "❌ *Wrong password!*", { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) });
+                await bot.sendMessage(chatId, "❌ <b>Wrong password!</b>", { parse_mode: 'HTML', ...bottomReplyKeyboard(userId) });
                 updateUser(userId, { pending_state: null });
             }
         }
         
         else if (user.pending_state === 'admin_broadcast') {
             if (!ADMIN_IDS.includes(Number(userId)) || !isAdminLoggedIn(userId)) {
-                await bot.sendMessage(chatId, `⛔ *Unauthorized*`, { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) });
+                await bot.sendMessage(chatId, `⛔ <b>Unauthorized</b>`, { parse_mode: 'HTML', ...bottomReplyKeyboard(userId) });
                 updateUser(userId, { pending_state: null });
                 return;
             }
@@ -1049,7 +1074,7 @@ bot.on('message', async (msg) => {
             
             for (const uid of Object.keys(db.users)) {
                 try {
-                    await bot.sendMessage(Number(uid), text, { parse_mode: 'Markdown' });
+                    await bot.sendMessage(Number(uid), text, { parse_mode: 'HTML' });
                     sent++;
                     if (sent % 10 === 0) {
                         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -1060,8 +1085,8 @@ bot.on('message', async (msg) => {
             }
             
             await bot.sendMessage(chatId,
-                `✅ *Broadcast Complete*\n\nSent: ${sent}\nFailed: ${failed}`,
-                { parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
+                `✅ <b>Broadcast Complete</b>\n\nSent: ${sent}\nFailed: ${failed}`,
+                { parse_mode: 'HTML', reply_markup: adminInlineKeyboard() }
             );
         }
         
@@ -1118,7 +1143,7 @@ app.listen(PORT, () => {
 
 // ==================== START ====================
 console.log('\n' + '='.repeat(60));
-console.log('🚀 REFi BOT - ULTIMATE FINAL VERSION');
+console.log('🚀 REFi BOT - ULTIMATE FINAL VERSION (HTML)');
 console.log('='.repeat(60));
 console.log(`📱 Bot: @${botUsername}`);
 console.log(`👤 Admin ID: ${ADMIN_IDS[0]}`);
