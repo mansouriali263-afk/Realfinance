@@ -1,7 +1,7 @@
 {
   "name": "realfinance-bot",
   "version": "1.0.0",
-  "description": "REFi Telegram Referral Bot with Bottom Navigation",
+  "description": "REFi Telegram Referral Bot",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
