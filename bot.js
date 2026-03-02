@@ -179,7 +179,7 @@ function isValidWallet(wallet) {
 
 // ==================== KEYBOARDS ====================
 function channelsKeyboard() {
-    // أزرار القنوات المنبثقة (قبل التحقق)
+    // Floating buttons for channels (before verification)
     const keyboard = [];
     REQUIRED_CHANNELS.forEach(ch => {
         keyboard.push([{ 
@@ -195,10 +195,10 @@ function channelsKeyboard() {
 }
 
 function bottomNavigation(userId) {
-    // شريط التنقل السفلي (بعد التحقق)
+    // Bottom navigation menu (always at the bottom) - Like the image
     const user = db.users[String(userId)] || {};
     
-    // صفان من الأزرار في الأسفل (2x2)
+    // Create bottom navigation similar to the image
     const keyboard = [
         [
             { text: '💰 Balance', callback_data: 'bal' },
@@ -206,20 +206,18 @@ function bottomNavigation(userId) {
         ],
         [
             { text: '📊 Stats', callback_data: 'stats' },
-            { text: '💸 Withdraw', callback_data: 'wd' }
+            { text: '👛 Wallet', callback_data: 'wallet' }
         ]
     ];
     
-    // صف إضافي حسب حالة المستخدم
-    const bottomRow = [];
-    if (!user.wallet) {
-        bottomRow.push({ text: '👛 Set Wallet', callback_data: 'wallet' });
+    // Add withdraw button if wallet exists
+    if (user.wallet) {
+        keyboard[1][1] = { text: '💸 Withdraw', callback_data: 'wd' };
     }
+    
+    // Add admin button for admins
     if (ADMIN_IDS.includes(Number(userId)) && isAdminLoggedIn(Number(userId))) {
-        bottomRow.push({ text: '👑 Admin', callback_data: 'admin' });
-    }
-    if (bottomRow.length > 0) {
-        keyboard.push(bottomRow);
+        keyboard.push([{ text: '👑 Admin Panel', callback_data: 'admin' }]);
     }
     
     return { inline_keyboard: keyboard };
@@ -319,7 +317,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
         return;
     }
     
-    // التحقق من القنوات
+    // Check channels
     const { allJoined, notJoined } = await checkChannels(userId);
     
     if (allJoined) {
@@ -364,13 +362,20 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
             { parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
         );
     } else {
-        // ===== هذه هي الرسالة المنبثقة الأولى مع أزرار القنوات =====
+        // ===== THIS IS THE CHANNELS VERIFICATION MESSAGE =====
+        const channelsText = REQUIRED_CHANNELS.map(ch => `• ${ch.name}`).join('\n');
+        
         await bot.sendMessage(chatId, 
-            `🎉 *Welcome to REFi Bot!*\n\n` +
+            `🎉 *Welcome to Realfinancepaybot!*\n\n` +
             `💰 *Welcome Bonus:* ${formatRefi(WELCOME_BONUS)}\n` +
             `👥 *Referral Bonus:* ${formatRefi(REFERRAL_BONUS)} per friend\n\n` +
-            `📢 *To start, you must join these channels first:*`,
-            { parse_mode: 'Markdown', reply_markup: channelsKeyboard() }
+            `📢 *To start, you must join these channels first:*\n` +
+            `${channelsText}\n\n` +
+            `👇 After joining, click the VERIFY button`,
+            { 
+                parse_mode: 'Markdown', 
+                reply_markup: channelsKeyboard() 
+            }
         );
     }
 });
