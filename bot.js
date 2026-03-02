@@ -6,7 +6,7 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 
 // ==================== CONFIG ====================
-const token = '7823073143:AAHLNyB7MlVl8rhoMJX7wCAvanJvs2vfwM4';
+const token = '7823073143:AAGUBhcMHfl19WMvlwUn7orzyRwouvdLItM';
 const botUsername = 'RealnetworkPaybot';
 const bot = new TelegramBot(token, { polling: true });
 
