@@ -1,4 +1,4 @@
-// ==================== REFi BOT - REPLY KEYBOARD VERSION ====================
+// ==================== REFi BOT - FIXED WELCOME MESSAGE ====================
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const express = require('express');
@@ -206,7 +206,7 @@ async function checkChannels(userId) {
 
 // ==================== KEYBOARDS ====================
 function channelsKeyboard() {
-    // أزرار القنوات المنبثقة (تظهر قبل التحقق فقط)
+    // أزرار القنوات العائمة (تظهر قبل التحقق)
     const keyboard = [];
     REQUIRED_CHANNELS.forEach(ch => {
         keyboard.push([{ 
@@ -251,6 +251,14 @@ function bottomReplyKeyboard(userId) {
     };
 }
 
+function removeKeyboard() {
+    return {
+        reply_markup: {
+            remove_keyboard: true
+        }
+    };
+}
+
 function adminInlineKeyboard() {
     return {
         inline_keyboard: [
@@ -272,14 +280,6 @@ function withdrawalInlineKeyboard(rid) {
             ],
             [{ text: '🔙 Back', callback_data: 'admin_pending' }]
         ]
-    };
-}
-
-function removeKeyboard() {
-    return {
-        reply_markup: {
-            remove_keyboard: true
-        }
     };
 }
 
@@ -313,8 +313,70 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
         }
     }
     
-    // إذا كان محققاً مسبقاً → أزرار ثابتة في الأسفل
-    if (user.verified) {
+    // التحقق من القنوات
+    const joined = await checkChannels(userId);
+    
+    // إذا كان المستخدم غير محقق
+    if (!user.verified) {
+        if (joined) {
+            // إضافة مكافأة الترحيب (مرة واحدة فقط)
+            const newBalance = user.balance + WELCOME_BONUS;
+            updateUser(userId, { 
+                verified: true, 
+                balance: newBalance, 
+                total_earned: user.total_earned + WELCOME_BONUS 
+            });
+            
+            console.log(`✅ Welcome bonus added: ${WELCOME_BONUS} to ${userId}`);
+            
+            // معالجة الإحالة (مكافأة المُحيل)
+            if (user.referred_by) {
+                const referrerId = user.referred_by;
+                const referrer = db.users[String(referrerId)];
+                if (referrer) {
+                    const refNewBalance = (referrer.balance || 0) + REFERRAL_BONUS;
+                    updateUser(referrerId, { 
+                        balance: refNewBalance,
+                        total_earned: (referrer.total_earned || 0) + REFERRAL_BONUS,
+                        referrals_count: (referrer.referrals_count || 0) + 1
+                    });
+                    
+                    console.log(`✅ Referral bonus added: ${REFERRAL_BONUS} to ${referrerId}`);
+                    
+                    try {
+                        await bot.sendMessage(referrerId, 
+                            `🎉 *Congratulations!*\n\nYour friend just verified!\n✨ You earned ${formatRefi(REFERRAL_BONUS)}!`,
+                            { parse_mode: 'Markdown' }
+                        );
+                    } catch (e) {}
+                }
+            }
+            
+            // بعد التحقق → أزرار ثابتة في الأسفل
+            await bot.sendMessage(chatId, 
+                `✅ *Verification Successful!*\n\n✨ Added ${formatRefi(WELCOME_BONUS)}\n💰 Balance: ${formatRefi(newBalance)}`,
+                { 
+                    parse_mode: 'Markdown', 
+                    ...bottomReplyKeyboard(userId) 
+                }
+            );
+        } else {
+            // قبل التحقق → رسالة القنوات مع أزرار عائمة
+            const channelsText = REQUIRED_CHANNELS.map(ch => `• ${ch.name}`).join('\n');
+            await bot.sendMessage(chatId, 
+                `🎉 *Welcome to Realfinancepaybot!*\n\n` +
+                `💰 *Welcome Bonus:* ${formatRefi(WELCOME_BONUS)}\n` +
+                `👥 *Referral Bonus:* ${formatRefi(REFERRAL_BONUS)} per friend\n\n` +
+                `📢 *To start, you must join these channels first:*\n${channelsText}\n\n` +
+                `👇 After joining, click the VERIFY button`,
+                { 
+                    parse_mode: 'Markdown', 
+                    reply_markup: channelsKeyboard() 
+                }
+            );
+        }
+    } else {
+        // إذا كان محققاً مسبقاً → أزرار ثابتة في الأسفل فقط
         await bot.sendMessage(chatId, 
             `🎯 *Welcome Back!*\n\n💰 Balance: ${formatRefi(user.balance)}`,
             { 
@@ -322,74 +384,92 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
                 ...bottomReplyKeyboard(userId) 
             }
         );
-        return;
     }
+});
+
+// Callback query for verify button
+bot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    const userId = query.from.id;
+    const data = query.data;
+    const msgId = query.message.message_id;
     
-    // التحقق من القنوات
-    const joined = await checkChannels(userId);
-    
-    if (joined) {
-        // إضافة مكافأة الترحيب (مرة واحدة فقط)
-        const newBalance = user.balance + WELCOME_BONUS;
-        updateUser(userId, { 
-            verified: true, 
-            balance: newBalance, 
-            total_earned: user.total_earned + WELCOME_BONUS 
-        });
+    if (data === 'verify') {
+        await bot.answerCallbackQuery(query.id, { text: '✅ Checking...' });
         
-        console.log(`✅ Welcome bonus added: ${WELCOME_BONUS} to ${userId}`);
+        const joined = await checkChannels(userId);
+        const user = db.users[String(userId)];
         
-        // معالجة الإحالة (مكافأة المُحيل)
-        if (user.referred_by) {
-            const referrerId = user.referred_by;
-            const referrer = db.users[String(referrerId)];
-            if (referrer) {
-                const refNewBalance = (referrer.balance || 0) + REFERRAL_BONUS;
-                updateUser(referrerId, { 
-                    balance: refNewBalance,
-                    total_earned: (referrer.total_earned || 0) + REFERRAL_BONUS,
-                    referrals_count: (referrer.referrals_count || 0) + 1
-                });
-                
-                console.log(`✅ Referral bonus added: ${REFERRAL_BONUS} to ${referrerId}`);
-                
-                try {
-                    await bot.sendMessage(referrerId, 
-                        `🎉 *Congratulations!*\n\nYour friend just verified!\n✨ You earned ${formatRefi(REFERRAL_BONUS)}!`,
-                        { parse_mode: 'Markdown' }
-                    );
-                } catch (e) {}
+        if (joined && !user.verified) {
+            const newBalance = user.balance + WELCOME_BONUS;
+            updateUser(userId, { 
+                verified: true, 
+                balance: newBalance, 
+                total_earned: user.total_earned + WELCOME_BONUS 
+            });
+            
+            if (user.referred_by) {
+                const referrerId = user.referred_by;
+                const referrer = db.users[String(referrerId)];
+                if (referrer) {
+                    updateUser(referrerId, { 
+                        balance: (referrer.balance || 0) + REFERRAL_BONUS,
+                        referrals_count: (referrer.referrals_count || 0) + 1
+                    });
+                    
+                    try {
+                        await bot.sendMessage(referrerId, 
+                            `🎉 *You earned ${formatRefi(REFERRAL_BONUS)}!*`,
+                            { parse_mode: 'Markdown' }
+                        );
+                    } catch (e) {}
+                }
             }
+            
+            await bot.editMessageText(
+                `✅ *Verification Successful!*\n\n✨ Added ${formatRefi(WELCOME_BONUS)}\n💰 Balance: ${formatRefi(newBalance)}`,
+                { 
+                    chat_id: chatId, 
+                    message_id: msgId, 
+                    parse_mode: 'Markdown' 
+                }
+            );
+            
+            // Send new message with bottom keyboard
+            await bot.sendMessage(chatId,
+                `👇 Use the buttons below:`,
+                { ...bottomReplyKeyboard(userId) }
+            );
+            
+        } else if (user.verified) {
+            await bot.editMessageText(
+                `✅ You're already verified!`,
+                { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown' }
+            );
+            
+            await bot.sendMessage(chatId,
+                `👇 Use the buttons below:`,
+                { ...bottomReplyKeyboard(userId) }
+            );
+        } else {
+            const channelsText = REQUIRED_CHANNELS.map(ch => `• ${ch.name}`).join('\n');
+            await bot.editMessageText(
+                `❌ *Not joined yet!*\n\nPlease join:\n${channelsText}`,
+                { 
+                    chat_id: chatId, 
+                    message_id: msgId, 
+                    parse_mode: 'Markdown',
+                    reply_markup: channelsKeyboard() 
+                }
+            );
         }
-        
-        // بعد التحقق → أزرار ثابتة في الأسفل
-        await bot.sendMessage(chatId, 
-            `✅ *Verification Successful!*\n\n✨ Added ${formatRefi(WELCOME_BONUS)}\n💰 Balance: ${formatRefi(newBalance)}`,
-            { 
-                parse_mode: 'Markdown', 
-                ...bottomReplyKeyboard(userId) 
-            }
-        );
-    } else {
-        // قبل التحقق → رسالة القنوات مع أزرار عائمة (فقط هذه عائمة)
-        const channelsText = REQUIRED_CHANNELS.map(ch => `• ${ch.name}`).join('\n');
-        await bot.sendMessage(chatId, 
-            `🎉 *Welcome to Realfinancepaybot!*\n\n` +
-            `💰 *Welcome Bonus:* ${formatRefi(WELCOME_BONUS)}\n` +
-            `👥 *Referral Bonus:* ${formatRefi(REFERRAL_BONUS)} per friend\n\n` +
-            `📢 *To start, you must join these channels first:*\n${channelsText}\n\n` +
-            `👇 After joining, click the VERIFY button`,
-            { 
-                parse_mode: 'Markdown', 
-                reply_markup: channelsKeyboard() 
-            }
-        );
     }
 });
 
 // معالجة رسائل Reply Keyboard
 bot.on('message', async (msg) => {
     if (msg.text?.startsWith('/')) return;
+    if (msg.text === '✅ VERIFY MEMBERSHIP') return; // Ignore verify button text
     
     const chatId = msg.chat.id;
     const userId = msg.from.id;
@@ -835,7 +915,7 @@ app.listen(PORT, () => {
 
 // ==================== START ====================
 console.log('\n' + '='.repeat(50));
-console.log('🚀 REFi BOT - REPLY KEYBOARD VERSION');
+console.log('🚀 REFi BOT - FIXED WELCOME MESSAGE');
 console.log('='.repeat(50));
 console.log(`📱 Bot: @${botUsername}`);
 console.log(`👤 Admin: ${ADMIN_IDS[0]}`);
