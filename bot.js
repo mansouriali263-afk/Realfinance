@@ -1,4 +1,4 @@
-// ==================== REFi BOT - FIXED BOTTOM NAVIGATION ====================
+// ==================== REFi BOT - REPLY KEYBOARD VERSION ====================
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const express = require('express');
@@ -204,7 +204,7 @@ async function checkChannels(userId) {
     return true;
 }
 
-// ==================== KEYBOARDS - FIXED BOTTOM NAVIGATION ====================
+// ==================== KEYBOARDS ====================
 function channelsKeyboard() {
     // أزرار القنوات المنبثقة (تظهر قبل التحقق فقط)
     const keyboard = [];
@@ -221,49 +221,37 @@ function channelsKeyboard() {
     return { inline_keyboard: keyboard };
 }
 
-function bottomNavigation(userId) {
-    // أزرار ثابتة في الأسفل (تظهر بعد التحقق)
+function bottomReplyKeyboard(userId) {
+    // أزرار ثابتة في الأسفل (Reply Keyboard)
     const user = db.users[String(userId)] || {};
     
-    // الصف الأول - 3 أزرار أساسية
-    const keyboard = [
-        [
-            { text: '💰 Balance', callback_data: 'bal' },
-            { text: '🔗 Referral', callback_data: 'ref' },
-            { text: '📊 Stats', callback_data: 'stats' }
-        ]
-    ];
+    // الصف الأول
+    const row1 = ['💰 Balance', '🔗 Referral', '📊 Stats'];
     
-    // الصف الثاني - أزرار المحفظة والسحب
-    const secondRow = [];
-    
-    // زر المحفظة (يظهر دائماً)
-    secondRow.push({ text: '👛 Wallet', callback_data: 'wallet' });
-    
-    // إذا كان لديه محفظة، يظهر زر السحب - وإلا يظهر رسالة تعيين المحفظة
+    // الصف الثاني
+    const row2 = ['👛 Wallet'];
     if (user.wallet) {
-        secondRow.push({ text: '💸 Withdraw', callback_data: 'wd' });
+        row2.push('💸 Withdraw');
     }
     
-    keyboard.push(secondRow);
+    const keyboard = [row1, row2];
     
-    // زر المشرف (للمشرفين فقط)
+    // إضافة زر المشرف إذا كان مشرفاً
     if (ADMIN_IDS.includes(Number(userId)) && isAdminLoggedIn(Number(userId))) {
-        keyboard.push([{ text: '👑 Admin Panel', callback_data: 'admin' }]);
+        keyboard.push(['👑 Admin Panel']);
     }
     
-    return { inline_keyboard: keyboard };
+    return {
+        reply_markup: {
+            keyboard: keyboard,
+            resize_keyboard: true,
+            one_time_keyboard: false,
+            persistent: true
+        }
+    };
 }
 
-function backButton() { 
-    return { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'back' }]] }; 
-}
-
-function cancelButton() { 
-    return { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'back' }]] }; 
-}
-
-function adminKeyboard() {
+function adminInlineKeyboard() {
     return {
         inline_keyboard: [
             [{ text: '📊 Statistics', callback_data: 'admin_stats' }],
@@ -275,7 +263,7 @@ function adminKeyboard() {
     };
 }
 
-function withdrawalKeyboard(rid) {
+function withdrawalInlineKeyboard(rid) {
     return {
         inline_keyboard: [
             [
@@ -284,6 +272,14 @@ function withdrawalKeyboard(rid) {
             ],
             [{ text: '🔙 Back', callback_data: 'admin_pending' }]
         ]
+    };
+}
+
+function removeKeyboard() {
+    return {
+        reply_markup: {
+            remove_keyboard: true
+        }
     };
 }
 
@@ -321,7 +317,10 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     if (user.verified) {
         await bot.sendMessage(chatId, 
             `🎯 *Welcome Back!*\n\n💰 Balance: ${formatRefi(user.balance)}`,
-            { parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
+            { 
+                parse_mode: 'Markdown', 
+                ...bottomReplyKeyboard(userId) 
+            }
         );
         return;
     }
@@ -366,7 +365,10 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
         // بعد التحقق → أزرار ثابتة في الأسفل
         await bot.sendMessage(chatId, 
             `✅ *Verification Successful!*\n\n✨ Added ${formatRefi(WELCOME_BONUS)}\n💰 Balance: ${formatRefi(newBalance)}`,
-            { parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
+            { 
+                parse_mode: 'Markdown', 
+                ...bottomReplyKeyboard(userId) 
+            }
         );
     } else {
         // قبل التحقق → رسالة القنوات مع أزرار عائمة (فقط هذه عائمة)
@@ -377,104 +379,58 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
             `👥 *Referral Bonus:* ${formatRefi(REFERRAL_BONUS)} per friend\n\n` +
             `📢 *To start, you must join these channels first:*\n${channelsText}\n\n` +
             `👇 After joining, click the VERIFY button`,
-            { parse_mode: 'Markdown', reply_markup: channelsKeyboard() }
+            { 
+                parse_mode: 'Markdown', 
+                reply_markup: channelsKeyboard() 
+            }
         );
     }
 });
 
-// Callback queries
-bot.on('callback_query', async (query) => {
-    const chatId = query.message.chat.id;
-    const userId = query.from.id;
-    const data = query.data;
-    const msgId = query.message.message_id;
+// معالجة رسائل Reply Keyboard
+bot.on('message', async (msg) => {
+    if (msg.text?.startsWith('/')) return;
     
-    await bot.answerCallbackQuery(query.id);
-    console.log(`🔍 Callback: ${data} from user ${userId}`);
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const text = msg.text;
     
-    // ===== VERIFY =====
-    if (data === 'verify') {
-        const joined = await checkChannels(userId);
-        const user = db.users[String(userId)];
-        
-        if (joined && !user.verified) {
-            const newBalance = user.balance + WELCOME_BONUS;
-            updateUser(userId, { 
-                verified: true, 
-                balance: newBalance, 
-                total_earned: user.total_earned + WELCOME_BONUS 
-            });
-            
-            if (user.referred_by) {
-                const referrerId = user.referred_by;
-                const referrer = db.users[String(referrerId)];
-                if (referrer) {
-                    updateUser(referrerId, { 
-                        balance: (referrer.balance || 0) + REFERRAL_BONUS,
-                        referrals_count: (referrer.referrals_count || 0) + 1
-                    });
-                    
-                    try {
-                        await bot.sendMessage(referrerId, 
-                            `🎉 *You earned ${formatRefi(REFERRAL_BONUS)}!*`,
-                            { parse_mode: 'Markdown' }
-                        );
-                    } catch (e) {}
-                }
-            }
-            
-            await bot.editMessageText(
-                `✅ *Verification Successful!*\n\n✨ Added ${formatRefi(WELCOME_BONUS)}\n💰 Balance: ${formatRefi(newBalance)}`,
-                { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
-            );
-        } else if (user.verified) {
-            await bot.editMessageText(
-                `✅ You're already verified!`,
-                { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
-            );
-        } else {
-            const channelsText = REQUIRED_CHANNELS.map(ch => `• ${ch.name}`).join('\n');
-            await bot.editMessageText(
-                `❌ *Not joined yet!*\n\nPlease join:\n${channelsText}`,
-                { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: channelsKeyboard() }
-            );
-        }
-    }
+    console.log(`📩 Reply: ${text} from ${userId}`);
+    
+    const user = db.users[String(userId)];
+    if (!user) return;
     
     // ===== BALANCE =====
-    else if (data === 'bal') {
-        const user = db.users[String(userId)];
-        await bot.editMessageText(
+    if (text === '💰 Balance') {
+        await bot.sendMessage(chatId,
             `💰 *Your Balance*\n\n` +
             `• Current: ${formatRefi(user.balance)}\n` +
             `• Total earned: ${formatRefi(user.total_earned)}\n` +
             `• Total withdrawn: ${formatRefi(user.total_withdrawn)}\n` +
             `• Referrals: ${user.referrals_count || 0}`,
-            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: backButton() }
+            { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
         );
     }
     
     // ===== REFERRAL =====
-    else if (data === 'ref') {
-        const user = db.users[String(userId)];
+    else if (text === '🔗 Referral') {
         const link = `https://t.me/${botUsername}?start=${userId}`;
         const earned = (user.referrals_count || 0) * REFERRAL_BONUS;
         
-        await bot.editMessageText(
+        await bot.sendMessage(chatId,
             `🔗 *Your Referral Link*\n\n\`${link}\`\n\n` +
             `• Link clicks: ${user.referral_clicks || 0}\n` +
             `• Successful referrals: ${user.referrals_count || 0}\n` +
             `• Earnings from referrals: ${formatRefi(earned)}`,
-            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: backButton() }
+            { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
         );
     }
     
     // ===== STATS =====
-    else if (data === 'stats') {
-        const user = db.users[String(userId)];
+    else if (text === '📊 Stats') {
         const joined = new Date(user.joined_at * 1000).toLocaleDateString();
         
-        await bot.editMessageText(
+        await bot.sendMessage(chatId,
             `📊 *Your Statistics*\n\n` +
             `• ID: \`${userId}\`\n` +
             `• Joined: ${joined}\n` +
@@ -484,55 +440,54 @@ bot.on('callback_query', async (query) => {
             `• Link clicks: ${user.referral_clicks || 0}\n` +
             `• Verified: ${user.verified ? '✅' : '❌'}\n` +
             `• Wallet: ${shortWallet(user.wallet)}`,
-            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: backButton() }
+            { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
         );
     }
     
     // ===== WALLET =====
-    else if (data === 'wallet') {
-        const user = db.users[String(userId)];
+    else if (text === '👛 Wallet') {
         const current = user.wallet ? shortWallet(user.wallet) : 'Not set';
         
-        await bot.editMessageText(
+        await bot.sendMessage(chatId,
             `👛 *Wallet Management*\n\n` +
             `Current wallet: ${current}\n\n` +
             `Please send your BEP20 wallet address.\n` +
             `It must start with \`0x\` and be 42 characters long.\n\n` +
             `Example:\n` +
             `\`0x742d35Cc6634C0532925a3b844Bc454e4438f44e\``,
-            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: cancelButton() }
+            { parse_mode: 'Markdown', ...removeKeyboard() }
         );
+        
+        // Set state for wallet input
         updateUser(userId, { pending_state: 'waiting_wallet' });
     }
     
     // ===== WITHDRAW =====
-    else if (data === 'wd') {
-        const user = db.users[String(userId)];
-        
+    else if (text === '💸 Withdraw') {
         if (!user.verified) {
-            await bot.editMessageText(
+            await bot.sendMessage(chatId,
                 "❌ *Please verify first!*",
-                { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: backButton() }
+                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
             );
             return;
         }
         
         if (!user.wallet) {
-            await bot.editMessageText(
+            await bot.sendMessage(chatId,
                 "⚠️ *Please set a wallet first!*",
-                { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
+                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
             );
             return;
         }
         
         if (user.balance < MIN_WITHDRAW) {
             const needed = MIN_WITHDRAW - user.balance;
-            await bot.editMessageText(
+            await bot.sendMessage(chatId,
                 `⚠️ *Insufficient Balance*\n\n` +
                 `Minimum withdrawal: ${formatRefi(MIN_WITHDRAW)}\n` +
                 `Your balance: ${formatRefi(user.balance)}\n\n` +
                 `You need **${formatRefi(needed)}** more to withdraw.`,
-                { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
+                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
             );
             return;
         }
@@ -540,42 +495,33 @@ bot.on('callback_query', async (query) => {
         // Check pending withdrawals
         const pending = getUserWithdrawals(userId, 'pending');
         if (pending.length >= 3) {
-            await bot.editMessageText(
+            await bot.sendMessage(chatId,
                 `⚠️ You have ${pending.length} pending requests.`,
-                { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
+                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
             );
             return;
         }
         
-        await bot.editMessageText(
+        await bot.sendMessage(chatId,
             `💸 *Withdrawal Request*\n\n` +
             `Balance: ${formatRefi(user.balance)}\n` +
             `Minimum: ${formatRefi(MIN_WITHDRAW)}\n` +
             `Wallet: ${shortWallet(user.wallet)}\n\n` +
             `📝 *Enter amount:*`,
-            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: cancelButton() }
+            { parse_mode: 'Markdown', ...removeKeyboard() }
         );
+        
         updateUser(userId, { pending_state: 'waiting_amount' });
     }
     
-    // ===== BACK =====
-    else if (data === 'back') {
-        const user = db.users[String(userId)];
-        await bot.editMessageText(
-            `🎯 *Main Menu*\n\n💰 Balance: ${formatRefi(user.balance)}`,
-            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
-        );
-        updateUser(userId, { pending_state: null });
-    }
-    
-    // ===== ADMIN =====
-    else if (data === 'admin') {
+    // ===== ADMIN PANEL =====
+    else if (text === '👑 Admin Panel') {
         if (!ADMIN_IDS.includes(Number(userId))) return;
         
         if (!isAdminLoggedIn(userId)) {
-            await bot.editMessageText(
+            await bot.sendMessage(chatId,
                 "🔐 *Admin Login*\n\nEnter password:",
-                { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: backButton() }
+                { parse_mode: 'Markdown', ...removeKeyboard() }
             );
             updateUser(userId, { pending_state: 'admin_login' });
             return;
@@ -585,7 +531,7 @@ bot.on('callback_query', async (query) => {
         const hours = Math.floor(stats.uptime / 3600);
         const minutes = Math.floor((stats.uptime % 3600) / 60);
         
-        await bot.editMessageText(
+        await bot.sendMessage(chatId,
             `👑 *Admin Panel*\n\n` +
             `📊 *Statistics*\n` +
             `• Users: ${stats.total_users} (✅ ${stats.verified})\n` +
@@ -594,228 +540,27 @@ bot.on('callback_query', async (query) => {
             `• Pending withdrawals: ${stats.pending_withdrawals}\n` +
             `• Total referrals: ${stats.total_referrals}\n` +
             `• Uptime: ${hours}h ${minutes}m`,
-            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: adminKeyboard() }
+            { parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
         );
     }
     
-    // ===== ADMIN STATS =====
-    else if (data === 'admin_stats') {
-        const stats = getStats();
-        const hours = Math.floor(stats.uptime / 3600);
-        const minutes = Math.floor((stats.uptime % 3600) / 60);
-        
-        await bot.editMessageText(
-            `📊 *Detailed Statistics*\n\n` +
-            `👥 *Users*\n` +
-            `• Total: ${stats.total_users}\n` +
-            `• Verified: ${stats.verified}\n\n` +
-            `💰 *Balances*\n` +
-            `• Total balance: ${formatRefi(stats.total_balance)}\n` +
-            `• Total earned: ${formatRefi(stats.total_earned)}\n` +
-            `• Total withdrawn: ${formatRefi(stats.total_withdrawn)}\n\n` +
-            `⏳ *Pending: ${stats.pending_withdrawals}*\n` +
-            `👥 *Referrals: ${stats.total_referrals}*\n\n` +
-            `⏱️ *Uptime: ${hours}h ${minutes}m*`,
-            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: adminKeyboard() }
-        );
-    }
-    
-    // ===== ADMIN PENDING =====
-    else if (data === 'admin_pending') {
-        const pending = getPendingWithdrawals();
-        
-        if (pending.length === 0) {
-            await bot.editMessageText(
-                "✅ No pending withdrawals",
-                { chat_id: chatId, message_id: msgId, reply_markup: adminKeyboard() }
-            );
-            return;
-        }
-        
-        let text = "💰 *Pending Withdrawals*\n\n";
-        const keyboard = { inline_keyboard: [] };
-        
-        pending.slice(0, 5).forEach(w => {
-            const user = db.users[w.user_id] || { first_name: 'Unknown' };
-            text += `🆔 \`${w.id.slice(0, 8)}...\`\n`;
-            text += `👤 ${user.first_name}\n`;
-            text += `💰 ${formatRefi(w.amount)}\n`;
-            text += `📅 ${new Date(w.created_at * 1000).toLocaleString()}\n\n`;
-            
-            keyboard.inline_keyboard.push([
-                { text: `Process ${w.id.slice(0, 8)}`, callback_data: `process_${w.id}` }
-            ]);
-        });
-        
-        if (pending.length > 5) {
-            text += `*... and ${pending.length - 5} more*\n\n`;
-        }
-        
-        keyboard.inline_keyboard.push([{ text: '🔙 Back', callback_data: 'admin' }]);
-        
-        await bot.editMessageText(
-            text,
-            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: keyboard }
-        );
-    }
-    
-    // ===== PROCESS WITHDRAWAL =====
-    else if (data.startsWith('process_')) {
-        const rid = data.slice(8);
-        const w = db.withdrawals[rid];
-        if (!w) return;
-        
-        const user = db.users[w.user_id] || { first_name: 'Unknown' };
-        
-        await bot.editMessageText(
-            `💰 *Withdrawal Details*\n\n` +
-            `📝 Request: \`${rid}\`\n` +
-            `👤 User: ${user.first_name}\n` +
-            `💰 Amount: ${formatRefi(w.amount)}\n` +
-            `📮 Wallet: \`${w.wallet}\`\n` +
-            `📅 Created: ${new Date(w.created_at * 1000).toLocaleString()}`,
-            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: withdrawalKeyboard(rid) }
-        );
-    }
-    
-    // ===== APPROVE WITHDRAWAL =====
-    else if (data.startsWith('approve_')) {
-        const rid = data.slice(7);
-        if (processWithdrawal(rid, userId, 'approved')) {
-            const w = db.withdrawals[rid];
-            if (w) {
-                try {
-                    await bot.sendMessage(Number(w.user_id),
-                        `✅ *Withdrawal Approved!*\n\nAmount: ${formatRefi(w.amount)}`
-                    );
-                    
-                    const user = db.users[w.user_id] || {};
-                    const channelMsg = 
-                        `✅ *Withdrawal Approved*\n\n` +
-                        `👤 User: ${user.first_name || 'Unknown'} (@${user.username || 'None'})\n` +
-                        `🆔 ID: \`${w.user_id}\`\n` +
-                        `💰 Amount: ${formatRefi(w.amount)}\n` +
-                        `📮 Wallet: \`${w.wallet}\``;
-                    
-                    await bot.sendMessage(PAYMENT_CHANNEL, channelMsg, { parse_mode: 'Markdown' });
-                } catch (e) {}
-            }
-        }
-        const pending = getPendingWithdrawals();
-        if (pending.length === 0) {
-            await bot.editMessageText(
-                "✅ No pending withdrawals",
-                { chat_id: chatId, message_id: msgId, reply_markup: adminKeyboard() }
-            );
-        } else {
-            bot.emit('callback_query', { ...query, data: 'admin_pending' });
-        }
-    }
-    
-    // ===== REJECT WITHDRAWAL =====
-    else if (data.startsWith('reject_')) {
-        const rid = data.slice(6);
-        if (processWithdrawal(rid, userId, 'rejected')) {
-            const w = db.withdrawals[rid];
-            if (w) {
-                try {
-                    await bot.sendMessage(Number(w.user_id),
-                        `❌ *Withdrawal Rejected*\n\nAmount returned: ${formatRefi(w.amount)}`
-                    );
-                    
-                    const user = db.users[w.user_id] || {};
-                    const channelMsg = 
-                        `❌ *Withdrawal Rejected*\n\n` +
-                        `👤 User: ${user.first_name || 'Unknown'} (@${user.username || 'None'})\n` +
-                        `🆔 ID: \`${w.user_id}\`\n` +
-                        `💰 Amount: ${formatRefi(w.amount)}\n` +
-                        `📮 Wallet: \`${w.wallet}\``;
-                    
-                    await bot.sendMessage(PAYMENT_CHANNEL, channelMsg, { parse_mode: 'Markdown' });
-                } catch (e) {}
-            }
-        }
-        const pending = getPendingWithdrawals();
-        if (pending.length === 0) {
-            await bot.editMessageText(
-                "✅ No pending withdrawals",
-                { chat_id: chatId, message_id: msgId, reply_markup: adminKeyboard() }
-            );
-        } else {
-            bot.emit('callback_query', { ...query, data: 'admin_pending' });
-        }
-    }
-    
-    // ===== ADMIN BROADCAST =====
-    else if (data === 'admin_broadcast') {
-        await bot.editMessageText(
-            "📢 *Broadcast*\n\nSend message to all users:",
-            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: backButton() }
-        );
-        updateUser(userId, { pending_state: 'admin_broadcast' });
-    }
-    
-    // ===== ADMIN USERS =====
-    else if (data === 'admin_users') {
-        const users = Object.values(db.users)
-            .sort((a, b) => b.joined_at - a.joined_at)
-            .slice(0, 10);
-        
-        let text = "👥 *Recent Users*\n\n";
-        users.forEach(u => {
-            const name = u.first_name || 'Unknown';
-            const username = u.username ? `@${u.username}` : 'No username';
-            const verified = u.verified ? '✅' : '❌';
-            const joined = new Date(u.joined_at * 1000).toLocaleDateString();
-            text += `${verified} ${name} ${username}\n📅 ${joined} | 💰 ${formatRefi(u.balance)}\n\n`;
-        });
-        text += `\n📊 *Total users: ${Object.keys(db.users).length}*`;
-        
-        await bot.editMessageText(
-            text,
-            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: adminKeyboard() }
-        );
-    }
-    
-    // ===== ADMIN LOGOUT =====
-    else if (data === 'admin_logout') {
-        adminLogout(userId);
-        const user = db.users[String(userId)];
-        await bot.editMessageText(
-            `🔒 *Logged Out*\n\n💰 Balance: ${formatRefi(user.balance)}`,
-            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
-        );
-    }
-});
-
-// ==================== TEXT MESSAGES ====================
-bot.on('message', async (msg) => {
-    if (msg.text?.startsWith('/')) return;
-    
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    const text = msg.text;
-    const user = db.users[String(userId)];
-    if (!user) return;
-    
-    // ===== WAITING FOR WALLET =====
-    if (user.pending_state === 'waiting_wallet') {
+    // ===== PENDING STATES =====
+    else if (user.pending_state === 'waiting_wallet') {
         if (isValidWallet(text)) {
             updateUser(userId, { wallet: text, pending_state: null });
-            await bot.sendMessage(chatId, 
+            await bot.sendMessage(chatId,
                 `✅ *Wallet saved!*\n\n${shortWallet(text)}`,
-                { parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
+                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
             );
             console.log(`👛 Wallet set for ${userId}`);
         } else {
-            await bot.sendMessage(chatId, 
+            await bot.sendMessage(chatId,
                 "❌ *Invalid wallet address!*\n\nMust start with 0x and be 42 characters.",
                 { parse_mode: 'Markdown' }
             );
         }
     }
     
-    // ===== WAITING FOR WITHDRAWAL AMOUNT =====
     else if (user.pending_state === 'waiting_amount') {
         const amount = parseInt(text.replace(/,/g, ''));
         if (isNaN(amount)) {
@@ -857,20 +602,16 @@ bot.on('message', async (msg) => {
         
         try {
             await bot.sendMessage(PAYMENT_CHANNEL, channelMsg, { parse_mode: 'Markdown' });
-            console.log(`📢 Posted to channel: ${PAYMENT_CHANNEL}`);
-        } catch (e) {
-            console.log('Could not post to payment channel');
-        }
+        } catch (e) {}
         
         await bot.sendMessage(chatId,
             `✅ *Withdrawal Request Submitted!*\n\nRequest ID: \`${rid.slice(0, 8)}...\``,
-            { parse_mode: 'Markdown', reply_markup: bottomNavigation(userId) }
+            { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
         );
         
         console.log(`💰 Withdrawal: ${userId} requested ${amount} REFi`);
     }
     
-    // ===== ADMIN LOGIN =====
     else if (user.pending_state === 'admin_login') {
         if (text === ADMIN_PASSWORD) {
             adminLogin(userId);
@@ -889,36 +630,173 @@ bot.on('message', async (msg) => {
                 `• Withdrawn: ${formatRefi(stats.total_withdrawn)}\n` +
                 `• Pending: ${stats.pending_withdrawals}\n` +
                 `• Uptime: ${hours}h ${minutes}m`,
-                { parse_mode: 'Markdown', reply_markup: adminKeyboard() }
+                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
             );
         } else {
             await bot.sendMessage(chatId, "❌ *Wrong password!*", { parse_mode: 'Markdown' });
         }
     }
+});
+
+// Admin callback queries
+bot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    const userId = query.from.id;
+    const data = query.data;
+    const msgId = query.message.message_id;
     
-    // ===== ADMIN BROADCAST =====
-    else if (user.pending_state === 'admin_broadcast') {
-        updateUser(userId, { pending_state: null });
-        await bot.sendMessage(chatId, `📢 Broadcasting to ${Object.keys(db.users).length} users...`);
+    await bot.answerCallbackQuery(query.id);
+    console.log(`🔍 Admin Callback: ${data} from user ${userId}`);
+    
+    // Admin statistics
+    if (data === 'admin_stats') {
+        const stats = getStats();
+        await bot.editMessageText(
+            `📊 *Statistics*\n\nUsers: ${stats.total_users}\nVerified: ${stats.verified}\nBalance: ${formatRefi(stats.total_balance)}\nPending: ${stats.pending_withdrawals}`,
+            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
+        );
+    }
+    
+    // Admin pending withdrawals
+    else if (data === 'admin_pending') {
+        const pending = getPendingWithdrawals();
         
-        let sent = 0;
-        let failed = 0;
-        
-        for (const uid of Object.keys(db.users)) {
-            try {
-                await bot.sendMessage(Number(uid), text, { parse_mode: 'Markdown' });
-                sent++;
-                if (sent % 10 === 0) {
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                }
-            } catch (e) {
-                failed++;
-            }
+        if (pending.length === 0) {
+            await bot.editMessageText(
+                "✅ No pending withdrawals",
+                { chat_id: chatId, message_id: msgId, reply_markup: adminInlineKeyboard() }
+            );
+            return;
         }
         
-        await bot.sendMessage(chatId,
-            `✅ *Broadcast Complete*\n\nSent: ${sent}\nFailed: ${failed}`,
-            { parse_mode: 'Markdown', reply_markup: adminKeyboard() }
+        let text = "💰 *Pending Withdrawals*\n\n";
+        const keyboard = { inline_keyboard: [] };
+        
+        pending.slice(0, 5).forEach(w => {
+            const user = db.users[w.user_id] || { first_name: 'Unknown' };
+            text += `🆔 \`${w.id.slice(0, 8)}...\`\n`;
+            text += `👤 ${user.first_name}\n`;
+            text += `💰 ${formatRefi(w.amount)}\n`;
+            text += `📅 ${new Date(w.created_at * 1000).toLocaleString()}\n\n`;
+            
+            keyboard.inline_keyboard.push([
+                { text: `Process ${w.id.slice(0, 8)}`, callback_data: `process_${w.id}` }
+            ]);
+        });
+        
+        if (pending.length > 5) {
+            text += `*... and ${pending.length - 5} more*\n\n`;
+        }
+        
+        keyboard.inline_keyboard.push([{ text: '🔙 Back', callback_data: 'admin_back' }]);
+        
+        await bot.editMessageText(
+            text,
+            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: keyboard }
+        );
+    }
+    
+    // Process withdrawal
+    else if (data.startsWith('process_')) {
+        const rid = data.slice(8);
+        const w = db.withdrawals[rid];
+        if (!w) return;
+        
+        const user = db.users[w.user_id] || { first_name: 'Unknown' };
+        
+        await bot.editMessageText(
+            `💰 *Withdrawal Details*\n\n` +
+            `📝 Request: \`${rid}\`\n` +
+            `👤 User: ${user.first_name}\n` +
+            `💰 Amount: ${formatRefi(w.amount)}\n` +
+            `📮 Wallet: \`${w.wallet}\`\n` +
+            `📅 Created: ${new Date(w.created_at * 1000).toLocaleString()}`,
+            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: withdrawalInlineKeyboard(rid) }
+        );
+    }
+    
+    // Approve withdrawal
+    else if (data.startsWith('approve_')) {
+        const rid = data.slice(7);
+        if (processWithdrawal(rid, userId, 'approved')) {
+            const w = db.withdrawals[rid];
+            if (w) {
+                try {
+                    await bot.sendMessage(Number(w.user_id),
+                        `✅ *Withdrawal Approved!*\n\nAmount: ${formatRefi(w.amount)}`
+                    );
+                    
+                    const user = db.users[w.user_id] || {};
+                    const channelMsg = 
+                        `✅ *Withdrawal Approved*\n\n` +
+                        `👤 User: ${user.first_name || 'Unknown'} (@${user.username || 'None'})\n` +
+                        `🆔 ID: \`${w.user_id}\`\n` +
+                        `💰 Amount: ${formatRefi(w.amount)}\n` +
+                        `📮 Wallet: \`${w.wallet}\``;
+                    
+                    await bot.sendMessage(PAYMENT_CHANNEL, channelMsg, { parse_mode: 'Markdown' });
+                } catch (e) {}
+            }
+        }
+        // Refresh pending list
+        const pending = getPendingWithdrawals();
+        if (pending.length === 0) {
+            await bot.editMessageText(
+                "✅ No pending withdrawals",
+                { chat_id: chatId, message_id: msgId, reply_markup: adminInlineKeyboard() }
+            );
+        } else {
+            bot.emit('callback_query', { ...query, data: 'admin_pending' });
+        }
+    }
+    
+    // Reject withdrawal
+    else if (data.startsWith('reject_')) {
+        const rid = data.slice(6);
+        if (processWithdrawal(rid, userId, 'rejected')) {
+            const w = db.withdrawals[rid];
+            if (w) {
+                try {
+                    await bot.sendMessage(Number(w.user_id),
+                        `❌ *Withdrawal Rejected*\n\nAmount returned: ${formatRefi(w.amount)}`
+                    );
+                    
+                    const user = db.users[w.user_id] || {};
+                    const channelMsg = 
+                        `❌ *Withdrawal Rejected*\n\n` +
+                        `👤 User: ${user.first_name || 'Unknown'} (@${user.username || 'None'})\n` +
+                        `🆔 ID: \`${w.user_id}\`\n` +
+                        `💰 Amount: ${formatRefi(w.amount)}\n` +
+                        `📮 Wallet: \`${w.wallet}\``;
+                    
+                    await bot.sendMessage(PAYMENT_CHANNEL, channelMsg, { parse_mode: 'Markdown' });
+                } catch (e) {}
+            }
+        }
+        // Refresh pending list
+        const pending = getPendingWithdrawals();
+        if (pending.length === 0) {
+            await bot.editMessageText(
+                "✅ No pending withdrawals",
+                { chat_id: chatId, message_id: msgId, reply_markup: adminInlineKeyboard() }
+            );
+        } else {
+            bot.emit('callback_query', { ...query, data: 'admin_pending' });
+        }
+    }
+    
+    // Admin back
+    else if (data === 'admin_back') {
+        const stats = getStats();
+        await bot.editMessageText(
+            `👑 *Admin Panel*\n\n` +
+            `📊 *Statistics*\n` +
+            `• Users: ${stats.total_users} (✅ ${stats.verified})\n` +
+            `• Balance: ${formatRefi(stats.total_balance)}\n` +
+            `• Withdrawn: ${formatRefi(stats.total_withdrawn)}\n` +
+            `• Pending withdrawals: ${stats.pending_withdrawals}\n` +
+            `• Total referrals: ${stats.total_referrals}`,
+            { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: adminInlineKeyboard() }
         );
     }
 });
@@ -957,7 +835,7 @@ app.listen(PORT, () => {
 
 // ==================== START ====================
 console.log('\n' + '='.repeat(50));
-console.log('🚀 REFi BOT - FINAL VERSION');
+console.log('🚀 REFi BOT - REPLY KEYBOARD VERSION');
 console.log('='.repeat(50));
 console.log(`📱 Bot: @${botUsername}`);
 console.log(`👤 Admin: ${ADMIN_IDS[0]}`);
