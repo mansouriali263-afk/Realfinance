@@ -1,4 +1,4 @@
-// ==================== REFi BOT - ULTIMATE FINAL VERSION ====================
+// ==================== REFi BOT - ULTIMATE SIMPLIFIED VERSION ====================
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const express = require('express');
@@ -242,25 +242,18 @@ function channelsKeyboard() {
 }
 
 function bottomReplyKeyboard(userId) {
-    // Bottom fixed buttons (تظهر بعد التحقق)
+    // Bottom fixed buttons (تظهر بعد التحقق) - بدون زر محفظة منفصل
     const user = db.users[String(userId)] || {};
     
     // First row - 3 main buttons
     const row1 = ['💰 Balance', '🔗 Referral', '📊 Stats'];
     
-    // Second row - wallet and withdraw (دائماً جنب بعض)
-    const row2 = [];
-    
-    // زر المحفظة (يظهر دائماً)
-    row2.push('👛 Wallet');
-    
-    // زر السحب (يظهر دائماً بجانب المحفظة، حتى لو ما في محفظة)
-    // إذا ما في محفظة، السحب بيطلب المحفظة أولاً
-    row2.push('💸 Withdraw');
+    // Second row - فقط زر السحب (سيطلب المحفظة إذا لزم الأمر)
+    const row2 = ['💸 Withdraw'];
     
     const keyboard = [row1, row2];
     
-    // Add admin button if admin (بدون Twitter)
+    // Add admin button if admin
     if (ADMIN_IDS.includes(Number(userId)) && isAdminLoggedIn(Number(userId))) {
         keyboard.push(['👑 Admin Panel']);
     }
@@ -377,7 +370,7 @@ bot.onText(/\/admin/, async (msg) => {
     if (!ADMIN_IDS.includes(Number(userId))) {
         await bot.sendMessage(chatId,
             `⛔ *Unauthorized Access*\n\nYou are not authorized to use this command.`,
-            { parse_mode: 'Markdown' }
+            { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
         );
         console.log(`❌ Unauthorized admin access attempt by ${userId}`);
         return;
@@ -464,7 +457,7 @@ bot.on('callback_query', async (query) => {
                 }
             );
             
-            // Send main menu with bottom keyboard (بدون Twitter)
+            // Send main menu with bottom keyboard (بدون زر محفظة منفصل)
             await bot.sendMessage(chatId,
                 `👇 Use the buttons below:`,
                 { ...bottomReplyKeyboard(userId) }
@@ -551,26 +544,9 @@ bot.on('message', async (msg) => {
             `• Referrals: ${user.referrals_count || 0}\n` +
             `• Link clicks: ${user.referral_clicks || 0}\n` +
             `• Verified: ${user.verified ? '✅' : '❌'}\n` +
-            `• Wallet: ${shortWallet(user.wallet)}`,
+            `• Wallet: ${user.wallet ? shortWallet(user.wallet) : 'Not set'}`,
             { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
         );
-    }
-    
-    // ===== WALLET =====
-    else if (text === '👛 Wallet') {
-        const current = user.wallet ? shortWallet(user.wallet) : 'Not set';
-        
-        await bot.sendMessage(chatId,
-            `👛 *Wallet Management*\n\n` +
-            `Current wallet: ${current}\n\n` +
-            `Please send your BEP20 wallet address.\n` +
-            `It must start with \`0x\` and be 42 characters long.\n\n` +
-            `Example:\n` +
-            `\`0x742d35Cc6634C0532925a3b844Bc454e4438f44e\``,
-            { parse_mode: 'Markdown', ...removeKeyboard() }
-        );
-        
-        updateUser(userId, { pending_state: 'waiting_wallet' });
     }
     
     // ===== WITHDRAW =====
@@ -586,7 +562,7 @@ bot.on('message', async (msg) => {
         // إذا ما في محفظة، اطلبها أولاً
         if (!user.wallet) {
             await bot.sendMessage(chatId,
-                `👛 *Wallet Required*\n\nYou need to set a wallet first.\n\nPlease send your BEP20 wallet address.\nIt must start with \`0x\` and be 42 characters long.`,
+                `👛 *Wallet Required*\n\nPlease send your BEP20 wallet address.\nIt must start with \`0x\` and be 42 characters long.`,
                 { parse_mode: 'Markdown', ...removeKeyboard() }
             );
             updateUser(userId, { pending_state: 'waiting_wallet' });
@@ -672,6 +648,19 @@ bot.on('message', async (msg) => {
                 { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
             );
             console.log(`👛 Wallet set for ${userId}`);
+            
+            // بعد حفظ المحفظة، اسأل إذا كان يريد السحب
+            await bot.sendMessage(chatId,
+                `💸 Would you like to make a withdrawal now?`,
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '✅ Yes, withdraw now', callback_data: 'withdraw_now' }],
+                            [{ text: '🔙 Back to menu', callback_data: 'back_to_menu' }]
+                        ]
+                    }
+                }
+            );
         } else {
             await bot.sendMessage(chatId,
                 "❌ *Invalid wallet address!*\n\nMust start with 0x and be 42 characters.",
@@ -772,7 +761,7 @@ bot.on('message', async (msg) => {
     }
 });
 
-// ==================== ADMIN CALLBACK HANDLERS ====================
+// ==================== ADDITIONAL CALLBACK HANDLERS ====================
 bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
     const userId = query.from.id;
@@ -781,6 +770,78 @@ bot.on('callback_query', async (query) => {
     
     // Already answered in the first callback handler
     if (data === 'verify') return;
+    
+    await bot.answerCallbackQuery(query.id);
+    console.log(`🔍 Callback: ${data} from user ${userId}`);
+    
+    // ===== WITHDRAW NOW =====
+    if (data === 'withdraw_now') {
+        const user = db.users[String(userId)];
+        if (!user) return;
+        
+        await bot.deleteMessage(chatId, msgId);
+        
+        if (!user.verified) {
+            await bot.sendMessage(chatId,
+                "❌ *Please verify first!*",
+                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+            );
+            return;
+        }
+        
+        if (user.balance < MIN_WITHDRAW) {
+            const needed = MIN_WITHDRAW - user.balance;
+            await bot.sendMessage(chatId,
+                `⚠️ *Insufficient Balance*\n\n` +
+                `Minimum withdrawal: ${formatRefi(MIN_WITHDRAW)}\n` +
+                `Your balance: ${formatRefi(user.balance)}\n\n` +
+                `You need **${formatRefi(needed)}** more to withdraw.`,
+                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+            );
+            return;
+        }
+        
+        const pending = getUserWithdrawals(userId, 'pending');
+        if (pending.length >= 3) {
+            await bot.sendMessage(chatId,
+                `⚠️ You have ${pending.length} pending requests.`,
+                { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+            );
+            return;
+        }
+        
+        await bot.sendMessage(chatId,
+            `💸 *Withdrawal Request*\n\n` +
+            `Balance: ${formatRefi(user.balance)}\n` +
+            `Minimum: ${formatRefi(MIN_WITHDRAW)}\n` +
+            `Wallet: ${shortWallet(user.wallet)}\n\n` +
+            `📝 *Enter amount:*`,
+            { parse_mode: 'Markdown', ...removeKeyboard() }
+        );
+        
+        updateUser(userId, { pending_state: 'waiting_amount' });
+    }
+    
+    // ===== BACK TO MENU =====
+    else if (data === 'back_to_menu') {
+        await bot.deleteMessage(chatId, msgId);
+        const user = db.users[String(userId)];
+        await bot.sendMessage(chatId,
+            `🎯 *Main Menu*\n\n💰 Balance: ${formatRefi(user.balance)}`,
+            { parse_mode: 'Markdown', ...bottomReplyKeyboard(userId) }
+        );
+    }
+});
+
+// ==================== ADMIN CALLBACK HANDLERS ====================
+bot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    const userId = query.from.id;
+    const data = query.data;
+    const msgId = query.message.message_id;
+    
+    // Already answered in previous handlers
+    if (data === 'verify' || data === 'withdraw_now' || data === 'back_to_menu') return;
     
     await bot.answerCallbackQuery(query.id);
     console.log(`🔍 Admin Callback: ${data} from user ${userId}`);
