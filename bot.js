@@ -43,16 +43,17 @@ bot.getMe().then(me => {
 });
 
 // ==================== CONSTANTS ====================
-const WELCOME_BONUS = 1_000_000;
-const REFERRAL_BONUS = 1_000_000;
+const WELCOME_BONUS = 500_000;
+const REFERRAL_BONUS = 500_000;
 const MIN_WITHDRAW = 5_000_000;
 const ADMIN_IDS = [1653918641];
 const ADMIN_PASSWORD = 'Ali97$';
-const PAYMENT_GROUP = -1002692937287;  // مجموعة المدفوعات (المشرفين)
+const PAYMENT_GROUP = -1002166185833;  // مجموعة المدفوعات (المشرفين)
 
 // القنوات المطلوبة
 const REQUIRED_CHANNELS = [
-    { name: 'REFi Distribution', username: '@Realfinance_REFI' },
+    { name: 'REFi Network update', username: '@Realfinance_REFI' },
+    { name: 'Group Distribution', username: '@REFI_Group},
     { name: 'Airdrop Master VIP', username: '@Airdrop_MasterVIP' },
     { name: 'Daily Airdrop', username: '@Daily_AirdropX' }
 ];
