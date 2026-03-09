@@ -612,7 +612,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     
     const channelsText = REQUIRED_CHANNELS.map(ch => `• ${ch.name}`).join('\n');
     await bot.sendMessage(chatId, 
-        `🎉 <b>Welcome to Realfinancepaybot!</b>\n\n` +
+        `🎉 <b>Welcome to Real finance pay bot!</b>\n\n` +
         `💰 <b>Welcome Bonus:</b> ${formatRefi(WELCOME_BONUS)}\n` +
         `👥 <b>Referral Bonus:</b> ${formatRefi(REFERRAL_BONUS)} per friend\n\n` +
         `📢 <b>To start, you must join these channels first:</b>\n${channelsText}\n\n` +
