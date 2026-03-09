@@ -43,7 +43,7 @@ bot.getMe().then(me => {
 });
 
 // ==================== CONSTANTS ====================
-const WELCOME_BONUS = 500_000;
+const WELCOME_BONUS = 50_500_000;
 const REFERRAL_BONUS = 500_000;
 const MIN_WITHDRAW = 5_000_000;
 const ADMIN_IDS = [1653918641];
